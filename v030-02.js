@@ -3,19 +3,35 @@ function bindDrawer() {
   const content = document.querySelector('#ng-settings .inline-drawer-content');
   const icon = toggle?.querySelector('.inline-drawer-icon');
   if (!toggle || !content) return;
-  content.style.display = 'none';
-  const flip = event => {
-    if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return;
-    if (event.type === 'keydown') event.preventDefault();
-    event.stopPropagation();
-    const open = toggle.getAttribute('aria-expanded') !== 'true';
+
+  // SillyTavern's own .inline-drawer-content CSS is hidden by default. Setting
+  // display back to an empty string therefore leaves the drawer invisible.
+  // Keep control local to this extension and explicitly set a visible display.
+  const setOpen = open => {
     toggle.setAttribute('aria-expanded', String(open));
-    content.style.display = open ? '' : 'none';
+    content.style.display = open ? 'block' : 'none';
     icon?.classList.toggle('down', !open);
     icon?.classList.toggle('up', open);
   };
-  toggle.addEventListener('click', flip);
-  toggle.addEventListener('keydown', flip);
+
+  setOpen(false);
+
+  const flip = event => {
+    if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return;
+    if (event.type === 'keydown') event.preventDefault();
+
+    // Prevent SillyTavern's generic inline-drawer handler from toggling the
+    // same node a second time after our extension-specific handler runs.
+    event.stopPropagation();
+    event.stopImmediatePropagation?.();
+
+    setOpen(toggle.getAttribute('aria-expanded') !== 'true');
+  };
+
+  // Capture phase makes this deterministic even when SillyTavern has a
+  // delegated/native drawer listener installed elsewhere in the document.
+  toggle.addEventListener('click', flip, { capture: true });
+  toggle.addEventListener('keydown', flip, { capture: true });
 }
 
 function bindSettings() {
