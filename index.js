@@ -1,16 +1,20 @@
-// Novel Generation v0.3 runtime loader.
-// The implementation is split into ordered classic scripts so the feature module
-// stays small and Safari/iOS can fail safely without blocking SillyTavern startup.
-const NG_V030_PARTS = [
+// Novel Generation v0.3.1 runtime loader.
+// The implementation is split into ordered classic scripts so Safari/iOS can
+// fail safely without blocking SillyTavern startup. Provider adapters are loaded
+// before v030-08.js mounts/binds the UI, allowing v0.3.1 to replace the older
+// compatibility handlers deterministically.
+const NG_V031_PARTS = [
   'v030-01.js', 'v030-02.js', 'v030-03.js', 'v030-04.js',
-  'v030-05.js', 'v030-06.js', 'v030-07.js', 'v030-08.js',
+  'v030-05.js', 'v030-06.js', 'v030-07.js',
+  'v031-09.js', 'v031-10.js',
+  'v030-08.js',
 ];
 
-async function loadNovelGenerationV030() {
-  if (globalThis.__novelGenerationV030Ready || globalThis.__novelGenerationV030Loading) return;
-  globalThis.__novelGenerationV030Loading = true;
+async function loadNovelGenerationV031() {
+  if (globalThis.__novelGenerationV031Ready || globalThis.__novelGenerationV031Loading) return;
+  globalThis.__novelGenerationV031Loading = true;
   try {
-    for (const part of NG_V030_PARTS) {
+    for (const part of NG_V031_PARTS) {
       await new Promise((resolve, reject) => {
         const script = document.createElement('script');
         script.src = new URL(`./${part}`, import.meta.url).href;
@@ -21,12 +25,12 @@ async function loadNovelGenerationV030() {
         (document.head || document.documentElement).appendChild(script);
       });
     }
-    globalThis.__novelGenerationV030Ready = true;
+    globalThis.__novelGenerationV031Ready = true;
   } finally {
-    globalThis.__novelGenerationV030Loading = false;
+    globalThis.__novelGenerationV031Loading = false;
   }
 }
 
-void loadNovelGenerationV030().catch(error => {
-  console.error('[Novel Generation] v0.3 runtime failed to load safely:', error);
+void loadNovelGenerationV031().catch(error => {
+  console.error('[Novel Generation] v0.3.1 runtime failed to load safely:', error);
 });
