@@ -1,0 +1,340 @@
+@import url("./style-v040.css");
+
+/* Novel Generation v0.5.2 — mobile image viewer, gallery/save fixes, size tools. */
+
+.ng-image-tap-target {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: zoom-in;
+  line-height: 0;
+}
+.ng-image-tap-target:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.ng-viewable-image {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: default;
+}
+
+.ng-image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483645;
+  display: grid;
+  place-items: center;
+  padding:
+    max(10px, env(safe-area-inset-top))
+    max(10px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom))
+    max(10px, env(safe-area-inset-left));
+  box-sizing: border-box;
+  background: rgba(0,0,0,.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+body.ng-image-viewer-open {
+  overflow: hidden !important;
+}
+.ng-image-viewer-dialog {
+  width: min(1180px, 100%);
+  height: min(920px, calc(100dvh - 20px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.18));
+  border-radius: 12px;
+  background: var(--SmartThemeBlurTintColor, #151515);
+  box-shadow: 0 22px 80px rgba(0,0,0,.6);
+}
+.ng-image-viewer-dialog > header,
+.ng-image-viewer-dialog > footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.ng-image-viewer-dialog > header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+}
+.ng-image-viewer-dialog > header > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ng-image-viewer-dialog > header small {
+  opacity: .65;
+}
+.ng-image-viewer-dialog > footer {
+  flex-wrap: wrap;
+  border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+}
+.ng-image-viewer-dialog > footer .menu_button {
+  min-width: 130px;
+}
+.ng-image-viewer-dialog > footer small {
+  flex: 1 1 260px;
+  opacity: .62;
+}
+.ng-image-viewer-stage {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background:
+    linear-gradient(45deg, rgba(255,255,255,.025) 25%, transparent 25%) 0 0/20px 20px,
+    linear-gradient(-45deg, rgba(255,255,255,.025) 25%, transparent 25%) 0 10px/20px 20px,
+    #090909;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.ng-image-viewer-stage img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  -webkit-touch-callout: default;
+  user-select: none;
+}
+.ng-image-viewer-close {
+  min-width: 42px !important;
+  width: 42px;
+}
+
+/* Custom size scaler / ratio helper */
+.ng-v052-size-tools {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  margin-top: -2px;
+  padding: 9px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+.ng-v052-size-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ng-v052-size-toolbar .checkbox_label {
+  margin: 0 !important;
+}
+.ng-v052-size-toolbar .ng-v052-swap {
+  margin-left: auto;
+}
+.ng-v052-scale-row {
+  display: grid;
+  gap: 4px;
+}
+.ng-v052-scale-row > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+}
+.ng-v052-scale-row input[type="range"] {
+  width: 100%;
+  min-height: 34px;
+}
+.ng-v052-size-info {
+  font-size: .84em;
+  opacity: .68;
+  overflow-wrap: anywhere;
+}
+
+/* More useful previews: no accidental navigation, no cropped full gallery image. */
+.ng-gallery-image-button {
+  background:
+    linear-gradient(45deg, rgba(255,255,255,.025) 25%, transparent 25%) 0 0/18px 18px,
+    #111;
+}
+.ng-gallery-image-button > img {
+  width: 100%;
+  height: auto;
+  max-height: 52dvh;
+  object-fit: contain;
+  display: block;
+}
+.ng-generated-card > .ng-image-tap-target > img {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+/* Mobile Studio improvements */
+@media (max-width: 900px) {
+  .ng-studio-shell {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+
+  .ng-studio-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(150px, 25dvh) minmax(0, 1fr);
+  }
+
+  .ng-studio-main:has(.ng-generated-card) {
+    grid-template-rows: minmax(230px, 42dvh) minmax(0, 1fr);
+  }
+
+  .ng-studio-preview {
+    padding: 8px;
+    overscroll-behavior: contain;
+  }
+
+  .ng-generated-grid {
+    min-height: 0;
+    align-content: start;
+    grid-template-columns: 1fr;
+  }
+
+  .ng-generated-card > .ng-image-tap-target > img {
+    max-height: 34dvh;
+  }
+
+  .ng-studio-controls {
+    padding: 8px 8px max(12px, env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ng-studio-tabs {
+    gap: 6px;
+    padding-bottom: 7px;
+  }
+
+  .ng-studio-section > summary {
+    min-height: 48px;
+    box-sizing: border-box;
+    padding: 10px 4px;
+  }
+
+  .ng-studio-section-body {
+    padding: 4px 2px 14px;
+  }
+
+  .ng-studio-footer {
+    gap: 7px;
+    padding-top: 8px;
+  }
+
+  .ng-generation-status {
+    line-height: 1.3;
+  }
+
+  .ng-gallery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ng-gallery-item > img {
+    aspect-ratio: auto;
+  }
+
+  .ng-gallery-item .ng-generated-actions,
+  .ng-generated-card .ng-generated-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .ng-gallery-item .ng-generated-actions .menu_button,
+  .ng-generated-card .ng-generated-actions .menu_button {
+    min-width: 0;
+    width: 100%;
+    margin: 0;
+    min-height: 42px;
+    white-space: normal;
+  }
+
+  .ng-image-viewer {
+    padding: 0;
+  }
+
+  .ng-image-viewer-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .ng-image-viewer-dialog > header {
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  .ng-image-viewer-dialog > footer {
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  .ng-image-viewer-stage {
+    padding: 6px;
+  }
+
+  .ng-image-viewer-stage img {
+    max-width: 100%;
+    max-height: none;
+  }
+}
+
+@media (max-width: 650px) {
+  .ng-generated-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ng-v052-size-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ng-v052-size-toolbar .ng-v052-swap {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .ng-image-viewer-dialog > footer .menu_button {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+  }
+
+  .ng-image-viewer-dialog > footer small {
+    flex-basis: 100%;
+    font-size: .8em;
+  }
+
+  .ng-studio-header {
+    min-height: 54px;
+  }
+
+  .ng-studio-close {
+    min-width: 44px !important;
+    width: 44px;
+    min-height: 44px;
+  }
+
+  .ng-studio-tabs .menu_button {
+    min-height: 42px;
+  }
+}
