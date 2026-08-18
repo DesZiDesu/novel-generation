@@ -6,6 +6,7 @@
   "js": "bootstrap.js",
   "css": "style.css",
   "author": "DesZiDesu",
-  "version": "0.2.1",
-  "homePage": "https://github.com/DesZiDesu/novel-generation"
+  "version": "0.2.2",
+  "homePage": "https://github.com/DesZiDesu/novel-generation",
+  "auto_update": true
 }
