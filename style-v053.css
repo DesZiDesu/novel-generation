@@ -1,6 +1,6 @@
 @import url("./style-v052.css");
 
-/* Novel Generation v0.5.3 — weighted prompt visualization. */
+/* Novel Generation v0.5.4 — weighted prompt visualization with mobile-safe editing. */
 .ng-weight-editor {
   position: relative;
   width: 100%;
@@ -41,6 +41,7 @@
   white-space: pre-wrap;
   overflow-wrap: break-word;
   word-break: normal;
+  transition: opacity .12s ease;
 }
 
 .ng-weight-mirror-text {
@@ -52,6 +53,30 @@
   word-break: normal;
   transform-origin: top left;
   will-change: transform;
+}
+
+/*
+ * Editing mode: show the real textarea text and hide the mirror.
+ * This is especially important on iOS Safari, where selection handles,
+ * autocorrect and the magnifier become difficult to use if the native
+ * textarea text is transparent while a separate mirror is visible.
+ */
+.ng-weight-editor:focus-within > .ng-weight-textarea {
+  background: var(--SmartThemeBlurTintColor, rgba(35, 35, 38, .96)) !important;
+  color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  -webkit-text-fill-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  caret-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+}
+
+.ng-weight-editor:focus-within > .ng-weight-textarea::selection {
+  background: rgba(120, 170, 255, .34) !important;
+  color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  -webkit-text-fill-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+}
+
+.ng-weight-editor:focus-within > .ng-weight-mirror {
+  opacity: 0;
+  visibility: hidden;
 }
 
 .ng-weight-token {
@@ -101,12 +126,23 @@
   color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 76%, #83ccff 24%);
 }
 
+.ng-weight-edit-note {
+  opacity: .72;
+}
+
 @media (max-width: 650px) {
   .ng-weight-hint {
     display: grid;
     gap: 3px;
     margin-top: 5px;
     font-size: .73em;
+  }
+
+  .ng-weight-editor > .ng-weight-textarea {
+    font-size: 16px !important;
+    line-height: 1.42 !important;
+    min-height: 150px;
+    padding: 11px 12px !important;
   }
 
   .ng-weight-token {
@@ -117,7 +153,8 @@
 }
 
 @media (prefers-reduced-motion: reduce) {
-  .ng-weight-token {
+  .ng-weight-token,
+  .ng-weight-mirror {
     transition: none !important;
   }
 }
