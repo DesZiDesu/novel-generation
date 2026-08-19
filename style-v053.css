@@ -1,0 +1,123 @@
+@import url("./style-v052.css");
+
+/* Novel Generation v0.5.3 — weighted prompt visualization. */
+.ng-weight-editor {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.ng-weight-editor > .ng-weight-textarea {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  background: transparent !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  caret-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  text-shadow: none !important;
+}
+
+.ng-weight-editor > .ng-weight-textarea::placeholder {
+  color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  -webkit-text-fill-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  opacity: .42;
+}
+
+.ng-weight-editor > .ng-weight-textarea::selection {
+  background: rgba(120, 170, 255, .28);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.ng-weight-mirror {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  box-sizing: border-box;
+  pointer-events: none;
+  color: var(--SmartThemeBodyColor, #efefef);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+}
+
+.ng-weight-mirror-text {
+  box-sizing: border-box;
+  min-width: 100%;
+  min-height: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  transform-origin: top left;
+  will-change: transform;
+}
+
+.ng-weight-token {
+  position: relative;
+  border-radius: 3px;
+  background: var(--ng-weight-bg);
+  box-shadow: inset 0 -1px 0 var(--ng-weight-edge);
+  text-shadow:
+    0 0 var(--ng-weight-blur) var(--ng-weight-glow),
+    0 0 calc(var(--ng-weight-blur) * .55) var(--ng-weight-glow);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.ng-weight-token.is-positive {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 88%, #ffd27a 12%);
+}
+
+.ng-weight-token.is-negative {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 88%, #8fd5ff 12%);
+}
+
+.ng-weight-number,
+.ng-weight-delimiter {
+  opacity: .76;
+}
+
+.ng-weight-tag {
+  font-weight: 650;
+}
+
+.ng-weight-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 6px;
+  font-size: .78em;
+  line-height: 1.35;
+  opacity: .68;
+}
+
+.ng-weight-hint-positive {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 76%, #ffcb6b 24%);
+}
+
+.ng-weight-hint-negative {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 76%, #83ccff 24%);
+}
+
+@media (max-width: 650px) {
+  .ng-weight-hint {
+    display: grid;
+    gap: 3px;
+    margin-top: 5px;
+    font-size: .73em;
+  }
+
+  .ng-weight-token {
+    text-shadow:
+      0 0 calc(var(--ng-weight-blur) * .82) var(--ng-weight-glow),
+      0 0 calc(var(--ng-weight-blur) * .42) var(--ng-weight-glow);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ng-weight-token {
+    transition: none !important;
+  }
+}
