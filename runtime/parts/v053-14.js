@@ -1,7 +1,7 @@
-// Novel Generation v0.5.3 — weighted NovelAI prompt visualization.
+// Novel Generation v0.5.4 — weighted NovelAI prompt visualization.
 // Loaded after v0.5.2 so all previous generation, gallery, size and mobile features remain intact.
 
-var NG_V053_RELEASE = '0.5.3';
+var NG_V053_RELEASE = '0.5.4';
 
 function ngV053EscapeHtml(value) {
   return String(value ?? '')
@@ -116,11 +116,15 @@ function ngV053AttachWeightedEditor(textarea) {
     ngV053CopyEditorMetrics(textarea, mirror);
     ngV053SyncEditor(textarea);
   });
+  textarea.addEventListener('blur', function () {
+    ngV053CopyEditorMetrics(textarea, mirror);
+    ngV053SyncEditor(textarea);
+  });
 
   if (textarea.id === 'ng-prompt') {
     var hint = document.createElement('small');
     hint.className = 'ng-weight-hint';
-    hint.innerHTML = '<span class="ng-weight-hint-positive">1::tag:: positive emphasis</span><span class="ng-weight-hint-negative">-1::tag:: negative emphasis</span><span>Glow increases with magnitude and is capped for readability.</span>';
+    hint.innerHTML = '<span class="ng-weight-hint-positive">1::tag:: positive emphasis</span><span class="ng-weight-hint-negative">-1::tag:: negative emphasis</span><span>Glow increases with magnitude and is capped for readability.</span><span class="ng-weight-edit-note">While typing, the glow pauses so mobile cursor and text selection stay precise.</span>';
     wrapper.insertAdjacentElement('afterend', hint);
   }
 }
