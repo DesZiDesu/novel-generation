@@ -1435,11 +1435,11 @@ function ngRenderCapabilities() {
     statusNode.insertAdjacentElement('afterend', box);
   }
   box.innerHTML = `<strong>Provider capabilities</strong><br>`
-    + `OpenAI image wrapper: ${esc(ngCapabilityLabel(ngProviderCaps.wrapper))}<br>`
+    + `Provider: ${esc(ngCapabilityLabel(ngProviderCaps.wrapper))}<br>`
     + `NovelAI native generate: ${esc(ngCapabilityLabel(ngProviderCaps.nativeGenerate))}<br>`
     + `V4/V4.5 vibe encoder: ${esc(ngCapabilityLabel(ngProviderCaps.encodeVibe))}`
     + (ngProviderCaps.checkedAt ? `<br><small>Checked ${esc(new Date(ngProviderCaps.checkedAt).toLocaleTimeString())}</small>` : '');
-  box.classList.toggle('is-ok', ngProviderCaps.wrapper === 'supported' && (ngProviderCaps.nativeGenerate === 'supported' || ngProviderCaps.encodeVibe === 'supported'));
+  box.classList.toggle('is-ok', (ngProviderCaps.wrapper === 'supported' || ngProviderCaps.wrapper === 'direct') && (ngProviderCaps.nativeGenerate === 'supported' || ngProviderCaps.encodeVibe === 'supported'));
   return true;
 }
 
