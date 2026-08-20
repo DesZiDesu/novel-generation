@@ -4148,3 +4148,73 @@ generateState = async function (state, label) {
   return ngConsolidatedBaseGenerateState(state, label);
 };
 
+
+
+/*
+ * Keep the Studio's text draft in SillyTavern extension settings. Closing the
+ * overlay should only close the UI; it must not erase the prompt work the user
+ * has entered. Reference image data is intentionally not persisted because it
+ * can be very large; prompt text and separate character prompts are safe to
+ * restore across closing and reopening the Studio.
+ */
+function ngStudioDraftStore() {
+  const image = settings().image;
+  if (!image.studioDrafts || typeof image.studioDrafts !== 'object' || Array.isArray(image.studioDrafts)) image.studioDrafts = {};
+  return image.studioDrafts;
+}
+
+function ngStudioDraftSnapshot(state) {
+  return {
+    prompt: String(state?.prompt || ''),
+    negative: String(state?.negative || ''),
+    characters: Array.isArray(state?.characters) ? state.characters.slice(0, 12).map(function (character) {
+      return {
+        prompt: String(character?.prompt || ''),
+        position: ['auto', 'left', 'center', 'right'].includes(character?.position) ? character.position : 'auto',
+      };
+    }) : [],
+  };
+}
+
+function ngSaveStudioDraft() {
+  if (!studio) return;
+  ngStudioDraftStore()[String(studio.mode || 'free')] = ngStudioDraftSnapshot(studio);
+  save();
+}
+
+function ngRestoreStudioDraft(state) {
+  const draft = ngStudioDraftStore()[String(state.mode || 'free')];
+  if (!draft || typeof draft !== 'object') return state;
+  if (typeof draft.prompt === 'string') state.prompt = draft.prompt;
+  if (typeof draft.negative === 'string') state.negative = draft.negative;
+  if (Array.isArray(draft.characters)) {
+    state.characters = draft.characters.slice(0, 12).map(function (character) {
+      return {
+        prompt: String(character?.prompt || ''),
+        position: ['auto', 'left', 'center', 'right'].includes(character?.position) ? character.position : 'auto',
+      };
+    });
+  }
+  return state;
+}
+
+var ngDraftBaseNewStudio = newStudio;
+newStudio = function (mode, focus) {
+  return ngRestoreStudioDraft(ngDraftBaseNewStudio(mode, focus));
+};
+
+var ngDraftBaseBindStudio = bindStudio;
+bindStudio = function () {
+  ngDraftBaseBindStudio();
+  document.getElementById('ng-prompt')?.addEventListener('input', ngSaveStudioDraft);
+  document.getElementById('ng-negative')?.addEventListener('input', ngSaveStudioDraft);
+  document.getElementById('ng-character-list')?.addEventListener('input', ngSaveStudioDraft);
+  document.getElementById('ng-character-list')?.addEventListener('change', ngSaveStudioDraft);
+  document.getElementById('ng-character-list')?.addEventListener('click', ngSaveStudioDraft);
+};
+
+var ngDraftBaseCloseStudio = closeStudio;
+closeStudio = function () {
+  ngSaveStudioDraft();
+  return ngDraftBaseCloseStudio();
+};
