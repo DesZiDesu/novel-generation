@@ -21,6 +21,8 @@ const DEFAULTS = {
   provider: 'proxy',
   baseUrl: '',
   apiKey: '',
+  proxyBaseUrl: '',
+  proxyApiKey: '',
   model: 'nai-diffusion-4-5-full',
   responseFormat: 'b64_json',
   compatibility: 'auto',
@@ -72,8 +74,21 @@ function settings() {
   for (const [key, value] of Object.entries(DEFAULTS.image)) if (!(key in s.image)) s.image[key] = clone(value);
   for (const [key, value] of Object.entries(DEFAULTS.roleplay)) if (!(key in s.roleplay)) s.roleplay[key] = clone(value);
   if (typeof s.apiKey !== 'string') s.apiKey = '';
-  if (!apiKey && s.apiKey) apiKey = s.apiKey;
-  if (apiKey !== s.apiKey) s.apiKey = apiKey;
+  if (typeof s.proxyBaseUrl !== 'string') s.proxyBaseUrl = s.provider === 'proxy' ? s.baseUrl : '';
+  if (typeof s.proxyApiKey !== 'string') s.proxyApiKey = s.provider === 'proxy' ? s.apiKey : '';
+
+  if (s.provider === 'proxy') {
+    if (!s.proxyBaseUrl && s.baseUrl) s.proxyBaseUrl = s.baseUrl;
+    if (!s.proxyApiKey && s.apiKey) s.proxyApiKey = s.apiKey;
+    if (!apiKey && s.proxyApiKey) apiKey = s.proxyApiKey;
+    if (apiKey !== s.proxyApiKey) s.proxyApiKey = apiKey;
+    if (s.baseUrl !== s.proxyBaseUrl) s.baseUrl = s.proxyBaseUrl;
+    if (s.apiKey !== apiKey) s.apiKey = apiKey;
+  } else {
+    // Never persist or restore the official NovelAI key. It is session-only.
+    s.baseUrl = NAI_DIRECT_BASE_URL;
+    s.apiKey = '';
+  }
   return s;
 }
 
@@ -123,7 +138,7 @@ function settingsHtml() {
   const s = settings();
   const connection = `
     ${field('Provider', `<select id="ng-provider" class="text_pole"><option value="proxy" ${s.provider === 'proxy' ? 'selected' : ''}>OpenAI-compatible proxy</option><option value="novelai" ${s.provider === 'novelai' ? 'selected' : ''}>Direct NovelAI API</option></select>`, 'Direct NovelAI mode uses the official image.novelai.net native image API. Proxy mode keeps the existing OpenAI-compatible routes.')}
-    ${field('Base URL', `<input id="ng-base-url" class="text_pole" type="url" value="${attr(s.baseUrl)}" placeholder="${s.provider === 'novelai' ? NAI_DIRECT_BASE_URL : 'https://example.com/v1'}">`, s.provider === 'novelai' ? 'Leave blank to use https://image.novelai.net, or enter a compatible NovelAI mirror.' : 'Enter the base URL exposed by your image proxy.')}
+    ${field('Base URL', `<input id="ng-base-url" class="text_pole" type="url" value="${attr(s.baseUrl)}" placeholder="${s.provider === 'novelai' ? NAI_DIRECT_BASE_URL : 'https://example.com/v1'}" ${s.provider === 'novelai' ? 'readonly' : ''}>`, s.provider === 'novelai' ? 'Leave blank to use https://image.novelai.net, or enter a compatible NovelAI mirror.' : 'Enter the base URL exposed by your image proxy.')}
     ${field('API Key', `<div class="ng-key-row"><input id="ng-api-key" class="text_pole" type="password" value="${attr(apiKey)}" placeholder="Paste API key"><button id="ng-key-eye" class="menu_button" type="button" title="Show or hide API key"><i class="fa-solid fa-eye"></i></button></div>`, 'The key is stored in SillyTavern extension settings on this device and is never exported with gallery metadata.')}
     <button id="ng-connect" class="menu_button" type="button"><i class="fa-solid fa-plug-circle-check"></i> Test connection & load models</button>
     <div id="ng-status" class="ng-status">Not connected yet.</div>
@@ -218,18 +233,46 @@ function bindSettings() {
   const s = settings();
   const bind = (id, fn, event = 'input') => document.getElementById(id)?.addEventListener(event, e => { fn(e.currentTarget); save(); });
   bind('ng-provider', el => {
+    if (el.value === s.provider) return;
+    if (s.provider === 'proxy') {
+      s.proxyBaseUrl = s.baseUrl;
+      s.proxyApiKey = apiKey;
+    }
     s.provider = el.value;
+    const baseInput = document.getElementById('ng-base-url');
+    const keyInput = document.getElementById('ng-api-key');
+    const modelSelect = document.getElementById('ng-model');
+    models = [];
     if (s.provider === 'novelai') {
       s.compatibility = 'auto';
-      if (!s.baseUrl) {
-        s.baseUrl = NAI_DIRECT_BASE_URL;
-        const baseInput = document.getElementById('ng-base-url');
-        if (baseInput) baseInput.value = s.baseUrl;
+      s.baseUrl = NAI_DIRECT_BASE_URL;
+      apiKey = '';
+      s.apiKey = '';
+      if (baseInput) {
+        baseInput.value = NAI_DIRECT_BASE_URL;
+        baseInput.readOnly = true;
       }
+      if (keyInput) {
+        keyInput.value = '';
+        keyInput.type = 'password';
+      }
+    } else {
+      s.baseUrl = s.proxyBaseUrl || '';
+      apiKey = s.proxyApiKey || '';
+      s.apiKey = apiKey;
+      if (baseInput) {
+        baseInput.value = s.baseUrl;
+        baseInput.readOnly = false;
+      }
+      if (keyInput) keyInput.value = apiKey;
     }
+    if (modelSelect) modelSelect.disabled = true;
     ngProviderCaps.checked = false;
   }, 'change');
-  bind('ng-base-url', el => s.baseUrl = el.value.trim());
+  bind('ng-base-url', el => {
+    s.baseUrl = el.value.trim();
+    if (s.provider === 'proxy') s.proxyBaseUrl = s.baseUrl;
+  });
   bind('ng-format', el => s.responseFormat = el.value, 'change');
   bind('ng-compat', el => s.compatibility = el.value, 'change');
   bind('ng-route', el => s.routeMode = el.value, 'change');
@@ -250,7 +293,17 @@ function bindSettings() {
   bind('ng-width', el => { s.image.width = +el.value || 832; s.image.preset = 'custom'; });
   bind('ng-height', el => { s.image.height = +el.value || 1216; s.image.preset = 'custom'; });
 
-  document.getElementById('ng-api-key')?.addEventListener('input', e => { const s = settings(); apiKey = e.currentTarget.value; s.apiKey = apiKey; save(); });
+  document.getElementById('ng-api-key')?.addEventListener('input', e => {
+    const s = settings();
+    apiKey = e.currentTarget.value;
+    if (s.provider === 'proxy') {
+      s.proxyApiKey = apiKey;
+      s.apiKey = apiKey;
+    } else {
+      s.apiKey = '';
+    }
+    save();
+  });
   document.getElementById('ng-key-eye')?.addEventListener('click', () => {
     const input = document.getElementById('ng-api-key');
     if (input) input.type = input.type === 'password' ? 'text' : 'password';
