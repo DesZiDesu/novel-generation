@@ -4108,6 +4108,7 @@ requestCandidates = function (state) {
   });
   const nativeTopLevel = cleanObject({
     model: nested.payload.model || settings().model,
+    prompt: nested.payload.prompt || state.prompt.trim(),
     input: nested.payload.input || state.prompt.trim(),
     action: nested.payload.action || naiAction(state),
     parameters: undefined,
@@ -4122,5 +4123,28 @@ requestCandidates = function (state) {
     { name: 'openai-character-prompts-top-level', payload: openAiTopLevel },
     { name: 'nai-character-prompts-top-level', payload: nativeTopLevel },
   ];
+};
+
+/*
+ * RVL Connect exposes the OpenAI-compatible image wrapper but did not expose
+ * a Vibe encoder in capability probing. Sending a raw PNG in
+ * reference_image_multiple is not a valid NovelAI Vibe vector and can make
+ * the upstream image service fail with a 503. Stop before sending that
+ * misleading request; a proxy must provide an encoder route for Vibe
+ * Transfer to be valid.
+ */
+var ngConsolidatedBaseGenerateState = generateState;
+generateState = async function (state, label) {
+  if (state?.vibes?.length) {
+    if (!ngProviderCaps.checked) {
+      try { await ngProbeAdvancedCapabilities(); } catch (error) {
+        throw new Error('Vibe Transfer capability check failed: ' + (error?.message || error));
+      }
+    }
+    if (ngProviderCaps.encodeVibe !== 'supported' || !ngProviderCaps.encodeVibeUrl) {
+      throw new Error('This proxy does not expose a Vibe Transfer encoder route. RVL Connect must add Vibe/encode-vibe support before Vibe Transfer can work.');
+    }
+  }
+  return ngConsolidatedBaseGenerateState(state, label);
 };
 
