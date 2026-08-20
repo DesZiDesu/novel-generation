@@ -9,7 +9,16 @@ const SIZES = {
   landscape: [1216, 832, 'Horizontal'],
 };
 
+const NAI_DIRECT_BASE_URL = 'https://image.novelai.net';
+const NAI_DIRECT_MODELS = [
+  'nai-diffusion-4-5-full',
+  'nai-diffusion-4-5-curated',
+  'nai-diffusion-4-full',
+  'nai-diffusion-4-curated-preview',
+];
+
 const DEFAULTS = {
+  provider: 'proxy',
   baseUrl: '',
   apiKey: '',
   model: 'nai-diffusion-4-5-full',
@@ -56,6 +65,7 @@ function settings() {
   const c = ctx();
   c.extensionSettings[EXT] ??= clone(DEFAULTS);
   const s = c.extensionSettings[EXT];
+  if (!['proxy', 'novelai'].includes(s.provider)) s.provider = 'proxy';
   s.image ??= clone(DEFAULTS.image);
   s.roleplay ??= clone(DEFAULTS.roleplay);
   for (const [key, value] of Object.entries(DEFAULTS)) if (!(key in s)) s[key] = clone(value);
@@ -112,11 +122,12 @@ function sizePicker(prefix, image) {
 function settingsHtml() {
   const s = settings();
   const connection = `
-    ${field('Base URL', `<input id="ng-base-url" class="text_pole" type="url" value="${attr(s.baseUrl)}" placeholder="https://example.com/v1">`)}
+    ${field('Provider', `<select id="ng-provider" class="text_pole"><option value="proxy" ${s.provider === 'proxy' ? 'selected' : ''}>OpenAI-compatible proxy</option><option value="novelai" ${s.provider === 'novelai' ? 'selected' : ''}>Direct NovelAI API</option></select>`, 'Direct NovelAI mode uses the official image.novelai.net native image API. Proxy mode keeps the existing OpenAI-compatible routes.')}
+    ${field('Base URL', `<input id="ng-base-url" class="text_pole" type="url" value="${attr(s.baseUrl)}" placeholder="${s.provider === 'novelai' ? NAI_DIRECT_BASE_URL : 'https://example.com/v1'}">`, s.provider === 'novelai' ? 'Leave blank to use https://image.novelai.net, or enter a compatible NovelAI mirror.' : 'Enter the base URL exposed by your image proxy.')}
     ${field('API Key', `<div class="ng-key-row"><input id="ng-api-key" class="text_pole" type="password" value="${attr(apiKey)}" placeholder="Paste API key"><button id="ng-key-eye" class="menu_button" type="button" title="Show or hide API key"><i class="fa-solid fa-eye"></i></button></div>`, 'The key is stored in SillyTavern extension settings on this device and is never exported with gallery metadata.')}
     <button id="ng-connect" class="menu_button" type="button"><i class="fa-solid fa-plug-circle-check"></i> Test connection & load models</button>
     <div id="ng-status" class="ng-status">Not connected yet.</div>
-    ${field('Available model', `<select id="ng-model" class="text_pole" ${models.length ? '' : 'disabled'}>${models.length ? models.map(m => `<option value="${attr(m)}" ${m === s.model ? 'selected' : ''}>${esc(m)}</option>`).join('') : `<option>${esc(s.model)}</option>`}</select>`, 'After a successful connection test, models returned by /v1/models appear here.')}
+    ${field('Available model', `<select id="ng-model" class="text_pole" ${models.length ? '' : 'disabled'}>${models.length ? models.map(m => `<option value="${attr(m)}" ${m === s.model ? 'selected' : ''}>${esc(m)}</option>`).join('') : `<option>${esc(s.model)}</option>`}</select>`, s.provider === 'novelai' ? 'Direct mode uses the supported NovelAI Diffusion model list; the official image API does not expose /v1/models.' : 'After a successful connection test, models returned by /v1/models appear here.')}
     <div class="ng-grid ng-grid-2">
       ${field('Route mode', `<select id="ng-route" class="text_pole"><option value="auto" ${s.routeMode === 'auto' ? 'selected' : ''}>Auto</option><option value="images" ${s.routeMode === 'images' ? 'selected' : ''}>/v1/images/generations</option><option value="chat" ${s.routeMode === 'chat' ? 'selected' : ''}>/v1/chat/completions</option></select>`)}
       ${field('Payload mode', `<select id="ng-compat" class="text_pole"><option value="auto" ${s.compatibility === 'auto' ? 'selected' : ''}>Auto / NovelAI-aware</option><option value="strict" ${s.compatibility === 'strict' ? 'selected' : ''}>Strict OpenAI</option></select>`)}
@@ -206,6 +217,18 @@ function bindDrawer() {
 function bindSettings() {
   const s = settings();
   const bind = (id, fn, event = 'input') => document.getElementById(id)?.addEventListener(event, e => { fn(e.currentTarget); save(); });
+  bind('ng-provider', el => {
+    s.provider = el.value;
+    if (s.provider === 'novelai') {
+      s.compatibility = 'auto';
+      if (!s.baseUrl) {
+        s.baseUrl = NAI_DIRECT_BASE_URL;
+        const baseInput = document.getElementById('ng-base-url');
+        if (baseInput) baseInput.value = s.baseUrl;
+      }
+    }
+    ngProviderCaps.checked = false;
+  }, 'change');
   bind('ng-base-url', el => s.baseUrl = el.value.trim());
   bind('ng-format', el => s.responseFormat = el.value, 'change');
   bind('ng-compat', el => s.compatibility = el.value, 'change');
@@ -261,7 +284,14 @@ function setSize(target, preset) {
   if (height) height.value = data.height;
 }
 
-const base = () => settings().baseUrl.trim().replace(/\/+$/, '');
+function isDirectNovelAI() {
+  return settings().provider === 'novelai';
+}
+
+const base = () => {
+  const configured = String(settings().baseUrl || '').trim();
+  return (isDirectNovelAI() ? (configured || NAI_DIRECT_BASE_URL) : configured).replace(/\/+$/, '');
+};
 const endpoint = path => /\/v1$/i.test(base()) ? `${base()}${path.replace(/^\/v1/, '')}` : `${base()}${path}`;
 const headers = () => ({ 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) });
 
@@ -1386,6 +1416,7 @@ const ngProviderCaps = {
 };
 
 function ngCapabilityLabel(value) {
+  if (value === 'direct') return 'Direct NovelAI API';
   if (value === 'supported') return 'Supported';
   if (value === 'blocked') return 'Route found, access blocked';
   if (value === 'missing') return 'Not exposed';
@@ -1509,6 +1540,33 @@ async function connectAndLoadModels() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs));
   try {
+    if (isDirectNovelAI()) {
+      models = [...NAI_DIRECT_MODELS];
+      const select = document.getElementById('ng-model');
+      if (select) {
+        select.innerHTML = models.map(model => `<option value="${attr(model)}">${esc(model)}</option>`).join('');
+        const preferred = models.includes(s.model) ? s.model : NAI_DIRECT_MODELS[0];
+        s.model = preferred;
+        select.value = preferred;
+        select.disabled = false;
+      }
+      ngProviderCaps.wrapper = 'direct';
+      status('Checking the official NovelAI native routes…', 'testing');
+      ngRenderCapabilities();
+      await ngProbeAdvancedCapabilities();
+      if (ngProviderCaps.nativeGenerate !== 'supported' || !ngProviderCaps.nativeGenerateUrl) {
+        throw new Error('The official NovelAI image route was not confirmed. Check the API key, Base URL, or browser CORS access.');
+      }
+      save();
+      status(ngProviderCaps.encodeVibe === 'supported'
+        ? 'Connected directly to NovelAI. Native generation and Vibe Transfer are available.'
+        : 'Connected directly to NovelAI. Native generation is available; Vibe Transfer encoder was not confirmed.', 'ok');
+      toast('success', ngProviderCaps.encodeVibe === 'supported'
+        ? 'Direct NovelAI connected with advanced image features.'
+        : 'Direct NovelAI connected. Vibe Transfer is unavailable on this endpoint.');
+      return;
+    }
+
     const response = await fetch(endpoint('/v1/models'), { headers: headers(), signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await errText(response)}`);
     models = modelIds(await response.json());
@@ -1873,6 +1931,17 @@ async function generateState(state, label = 'Generating…') {
       try { await ngProbeAdvancedCapabilities(); } catch (error) { console.debug('[Novel Generation] capability probe before generation failed', error); }
     }
 
+    if (isDirectNovelAI()) {
+      if (ngProviderCaps.nativeGenerate !== 'supported' || !ngProviderCaps.nativeGenerateUrl) {
+        throw new Error('Direct NovelAI native image generation is not available. Reconnect and verify the official image API URL.');
+      }
+      if (state.vibes?.length && (ngProviderCaps.encodeVibe !== 'supported' || !ngProviderCaps.encodeVibeUrl)) {
+        throw new Error('Direct NovelAI Vibe Transfer requires the /ai/encode-vibe route, but this endpoint did not expose it.');
+      }
+      if (state.vibes?.length) await ngPrepareVibes(state, controller.signal);
+      return await ngPostNativeGeneration(state, controller.signal);
+    }
+
     if (state.vibes?.length && ngProviderCaps.encodeVibe === 'supported') {
       try {
         await ngPrepareVibes(state, controller.signal);
@@ -2007,6 +2076,7 @@ async function runUpscale(mode) {
 }
 
 async function tryDedicatedUpscale(source, mode, width, height) {
+  if (isDirectNovelAI()) return [];
   const s = settings();
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs));
