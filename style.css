@@ -1,3 +1,5 @@
+
+/* ===== Consolidated stylesheet section 01: style.css ===== */
 #ng-settings {
   --ng-border: var(--SmartThemeBorderColor, rgba(255,255,255,.14));
   --ng-soft: color-mix(in srgb, currentColor 7%, transparent);
@@ -385,5 +387,752 @@ body.ng-studio-open { overflow: hidden !important; }
       padding-right: max(12px, env(safe-area-inset-right));
     }
     .ng-studio-controls { padding-bottom: max(10px, env(safe-area-inset-bottom)); }
+  }
+}
+
+
+/* ===== Consolidated stylesheet section 02: style-v040.css ===== */
+/* Novel Generation v0.4.0 — Prompt Assistant / Danbooru artist browser */
+.ng-v040-toolbar,
+.ng-v040-search-row,
+.ng-v040-preview-dialog footer {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+
+.ng-v040-toolbar { margin-bottom: 10px; }
+.ng-v040-toolbar .text_pole { min-width:170px; flex:1 1 190px; }
+
+.ng-v040-cheat {
+  border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+  padding: 0;
+}
+.ng-v040-cheat:last-of-type { border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14)); }
+.ng-v040-cheat > summary {
+  list-style:none; cursor:pointer; display:flex; gap:8px; align-items:center;
+  padding:10px 2px; font-weight:700;
+}
+.ng-v040-cheat > summary::-webkit-details-marker { display:none; }
+.ng-v040-cheat > summary i { width:22px; text-align:center; opacity:.78; }
+.ng-v040-cheat > :not(summary) { margin-left:29px; }
+
+.ng-v040-tag-grid { display:flex; flex-wrap:wrap; gap:7px; margin:8px 0 12px; }
+.ng-v040-tag-grid .menu_button { min-width:0; width:auto; white-space:normal; text-align:left; padding:7px 9px !important; }
+.ng-v040-subhead { margin:10px 0 6px; font-weight:700; opacity:.82; }
+
+.ng-v040-search-row .text_pole { min-width:0; flex:1 1 220px; }
+.ng-v040-search-results {
+  display:grid; gap:6px; max-height:260px; overflow:auto; margin:8px 0 10px 29px;
+  overscroll-behavior:contain;
+}
+.ng-v040-artist-result {
+  display:flex !important; justify-content:space-between; align-items:center;
+  gap:8px; text-align:left; white-space:normal;
+}
+.ng-v040-artist-result small { opacity:.62; flex:0 0 auto; }
+
+.ng-v040-selected-artists { display:grid; gap:7px; margin:7px 0 10px; }
+.ng-v040-artist-chip {
+  display:grid; grid-template-columns:minmax(0,1fr) minmax(120px,170px) auto;
+  gap:7px; align-items:center; padding:7px;
+  border:1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+  border-radius:8px; background:color-mix(in srgb,currentColor 4%,transparent);
+}
+.ng-v040-artist-chip > span { min-width:0; overflow-wrap:anywhere; font-weight:700; }
+.ng-v040-artist-chip label { display:flex; align-items:center; gap:6px; font-size:.82em; opacity:.82; }
+.ng-v040-artist-chip .text_pole { min-width:0; width:75px; }
+
+.ng-v040-info-grid {
+  display:grid; grid-template-columns:repeat(2,minmax(0,1fr)); gap:8px;
+  margin:8px 0 12px 29px;
+}
+.ng-v040-info-grid > div {
+  display:flex; flex-direction:column; gap:3px; padding:9px;
+  border:1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+  border-radius:8px; background:color-mix(in srgb,currentColor 4%,transparent);
+}
+.ng-v040-info-grid span { opacity:.7; font-size:.84em; line-height:1.35; }
+
+.ng-v040-preset-row { display:grid; grid-template-columns:minmax(0,1fr) auto; gap:6px; margin-top:6px; }
+
+.ng-v040-preview-overlay {
+  position:fixed; inset:0; z-index:2147483640; display:grid; place-items:center;
+  padding:max(12px,env(safe-area-inset-top)) max(12px,env(safe-area-inset-right))
+          max(12px,env(safe-area-inset-bottom)) max(12px,env(safe-area-inset-left));
+  background:rgba(0,0,0,.76); box-sizing:border-box;
+}
+.ng-v040-preview-dialog {
+  width:min(760px,100%); max-height:min(900px,calc(100dvh - 24px)); overflow:auto;
+  border:1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.16));
+  border-radius:12px; background:var(--SmartThemeBlurTintColor,#161616);
+  color:var(--SmartThemeBodyColor,inherit); box-shadow:0 18px 60px rgba(0,0,0,.45);
+  padding:12px; box-sizing:border-box; overscroll-behavior:contain;
+}
+.ng-v040-preview-dialog > header { display:flex; justify-content:space-between; align-items:center; gap:10px; margin-bottom:10px; }
+.ng-v040-preview-dialog > header > div { display:flex; flex-direction:column; }
+.ng-v040-preview-dialog > header small { opacity:.62; text-transform:capitalize; }
+.ng-v040-preview-dialog textarea { width:100%; resize:vertical; box-sizing:border-box; }
+.ng-v040-preview-dialog footer {
+  justify-content:flex-end; margin-top:10px; position:sticky; bottom:0;
+  padding-top:8px; background:var(--SmartThemeBlurTintColor,#161616);
+}
+.ng-v040-preview-suggestions { padding:6px 0; }
+#ng-v040-drawer .ng-section-body { padding-bottom:14px; }
+#ng-v040-drawer .checkbox_label { margin:8px 0; }
+
+@media (max-width:720px) {
+  .ng-v040-info-grid { grid-template-columns:1fr; margin-left:0; }
+  .ng-v040-cheat > :not(summary) { margin-left:0; }
+  .ng-v040-search-results { margin-left:0; }
+  .ng-v040-artist-chip { grid-template-columns:1fr auto; }
+  .ng-v040-artist-chip label { grid-column:1 / -1; justify-content:space-between; }
+  .ng-v040-toolbar > * { flex:1 1 100%; }
+  .ng-v040-preview-dialog { border-radius:10px; }
+}
+
+
+/* ===== Consolidated stylesheet section 03: style-v052.css ===== */
+/* Novel Generation v0.5.2 — mobile image viewer, gallery/save fixes, size tools. */
+
+.ng-image-tap-target {
+  appearance: none;
+  -webkit-appearance: none;
+  display: block;
+  width: 100%;
+  min-width: 0;
+  padding: 0;
+  margin: 0;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  cursor: zoom-in;
+  line-height: 0;
+}
+.ng-image-tap-target:focus-visible {
+  outline: 2px solid currentColor;
+  outline-offset: 2px;
+}
+.ng-viewable-image {
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-touch-callout: default;
+}
+
+.ng-image-viewer {
+  position: fixed;
+  inset: 0;
+  z-index: 2147483645;
+  display: grid;
+  place-items: center;
+  padding:
+    max(10px, env(safe-area-inset-top))
+    max(10px, env(safe-area-inset-right))
+    max(10px, env(safe-area-inset-bottom))
+    max(10px, env(safe-area-inset-left));
+  box-sizing: border-box;
+  background: rgba(0,0,0,.92);
+  backdrop-filter: blur(8px);
+  -webkit-backdrop-filter: blur(8px);
+}
+body.ng-image-viewer-open {
+  overflow: hidden !important;
+}
+.ng-image-viewer-dialog {
+  width: min(1180px, 100%);
+  height: min(920px, calc(100dvh - 20px));
+  display: grid;
+  grid-template-rows: auto minmax(0, 1fr) auto;
+  overflow: hidden;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.18));
+  border-radius: 12px;
+  background: var(--SmartThemeBlurTintColor, #151515);
+  box-shadow: 0 22px 80px rgba(0,0,0,.6);
+}
+.ng-image-viewer-dialog > header,
+.ng-image-viewer-dialog > footer {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 10px 12px;
+}
+.ng-image-viewer-dialog > header {
+  justify-content: space-between;
+  border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+}
+.ng-image-viewer-dialog > header > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.ng-image-viewer-dialog > header small {
+  opacity: .65;
+}
+.ng-image-viewer-dialog > footer {
+  flex-wrap: wrap;
+  border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+}
+.ng-image-viewer-dialog > footer .menu_button {
+  min-width: 130px;
+}
+.ng-image-viewer-dialog > footer small {
+  flex: 1 1 260px;
+  opacity: .62;
+}
+.ng-image-viewer-stage {
+  min-width: 0;
+  min-height: 0;
+  overflow: auto;
+  display: grid;
+  place-items: center;
+  padding: 12px;
+  background:
+    linear-gradient(45deg, rgba(255,255,255,.025) 25%, transparent 25%) 0 0/20px 20px,
+    linear-gradient(-45deg, rgba(255,255,255,.025) 25%, transparent 25%) 0 10px/20px 20px,
+    #090909;
+  overscroll-behavior: contain;
+  -webkit-overflow-scrolling: touch;
+}
+.ng-image-viewer-stage img {
+  display: block;
+  width: auto;
+  height: auto;
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
+  -webkit-touch-callout: default;
+  user-select: none;
+}
+.ng-image-viewer-close {
+  min-width: 42px !important;
+  width: 42px;
+}
+
+/* Custom size scaler / ratio helper */
+.ng-v052-size-tools {
+  grid-column: 1 / -1;
+  display: grid;
+  gap: 8px;
+  margin-top: -2px;
+  padding: 9px;
+  border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
+  border-radius: 8px;
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+.ng-v052-size-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.ng-v052-size-toolbar .checkbox_label {
+  margin: 0 !important;
+}
+.ng-v052-size-toolbar .ng-v052-swap {
+  margin-left: auto;
+}
+.ng-v052-scale-row {
+  display: grid;
+  gap: 4px;
+}
+.ng-v052-scale-row > span {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  font-weight: 700;
+}
+.ng-v052-scale-row input[type="range"] {
+  width: 100%;
+  min-height: 34px;
+}
+.ng-v052-size-info {
+  font-size: .84em;
+  opacity: .68;
+  overflow-wrap: anywhere;
+}
+
+/* More useful previews: no accidental navigation, no cropped full gallery image. */
+.ng-gallery-image-button {
+  background:
+    linear-gradient(45deg, rgba(255,255,255,.025) 25%, transparent 25%) 0 0/18px 18px,
+    #111;
+}
+.ng-gallery-image-button > img {
+  width: 100%;
+  height: auto;
+  max-height: 52dvh;
+  object-fit: contain;
+  display: block;
+}
+.ng-generated-card > .ng-image-tap-target > img {
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+  border-radius: 8px;
+}
+
+/* Mobile Studio improvements */
+@media (max-width: 900px) {
+  .ng-studio-shell {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+  }
+
+  .ng-studio-main {
+    grid-template-columns: 1fr;
+    grid-template-rows: minmax(150px, 25dvh) minmax(0, 1fr);
+  }
+
+  .ng-studio-main:has(.ng-generated-card) {
+    grid-template-rows: minmax(230px, 42dvh) minmax(0, 1fr);
+  }
+
+  .ng-studio-preview {
+    padding: 8px;
+    overscroll-behavior: contain;
+  }
+
+  .ng-generated-grid {
+    min-height: 0;
+    align-content: start;
+    grid-template-columns: 1fr;
+  }
+
+  .ng-generated-card > .ng-image-tap-target > img {
+    max-height: 34dvh;
+  }
+
+  .ng-studio-controls {
+    padding: 8px 8px max(12px, env(safe-area-inset-bottom));
+    -webkit-overflow-scrolling: touch;
+  }
+
+  .ng-studio-tabs {
+    gap: 6px;
+    padding-bottom: 7px;
+  }
+
+  .ng-studio-section > summary {
+    min-height: 48px;
+    box-sizing: border-box;
+    padding: 10px 4px;
+  }
+
+  .ng-studio-section-body {
+    padding: 4px 2px 14px;
+  }
+
+  .ng-studio-footer {
+    gap: 7px;
+    padding-top: 8px;
+  }
+
+  .ng-generation-status {
+    line-height: 1.3;
+  }
+
+  .ng-gallery-grid {
+    grid-template-columns: 1fr;
+  }
+
+  .ng-gallery-item > img {
+    aspect-ratio: auto;
+  }
+
+  .ng-gallery-item .ng-generated-actions,
+  .ng-generated-card .ng-generated-actions {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 6px;
+  }
+
+  .ng-gallery-item .ng-generated-actions .menu_button,
+  .ng-generated-card .ng-generated-actions .menu_button {
+    min-width: 0;
+    width: 100%;
+    margin: 0;
+    min-height: 42px;
+    white-space: normal;
+  }
+
+  .ng-image-viewer {
+    padding: 0;
+  }
+
+  .ng-image-viewer-dialog {
+    width: 100vw;
+    height: 100dvh;
+    max-height: 100dvh;
+    border: 0;
+    border-radius: 0;
+  }
+
+  .ng-image-viewer-dialog > header {
+    padding-top: max(10px, env(safe-area-inset-top));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  .ng-image-viewer-dialog > footer {
+    padding-bottom: max(10px, env(safe-area-inset-bottom));
+    padding-left: max(12px, env(safe-area-inset-left));
+    padding-right: max(12px, env(safe-area-inset-right));
+  }
+
+  .ng-image-viewer-stage {
+    padding: 6px;
+  }
+
+  .ng-image-viewer-stage img {
+    max-width: 100%;
+    max-height: none;
+  }
+}
+
+@media (max-width: 650px) {
+  .ng-generated-actions {
+    display: grid !important;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .ng-v052-size-toolbar {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+  }
+
+  .ng-v052-size-toolbar .ng-v052-swap {
+    grid-column: 1 / -1;
+    width: 100%;
+    margin-left: 0;
+  }
+
+  .ng-image-viewer-dialog > footer .menu_button {
+    flex: 1 1 calc(50% - 4px);
+    min-width: 0;
+  }
+
+  .ng-image-viewer-dialog > footer small {
+    flex-basis: 100%;
+    font-size: .8em;
+  }
+
+  .ng-studio-header {
+    min-height: 54px;
+  }
+
+  .ng-studio-close {
+    min-width: 44px !important;
+    width: 44px;
+    min-height: 44px;
+  }
+
+  .ng-studio-tabs .menu_button {
+    min-height: 42px;
+  }
+}
+
+
+/* ===== Consolidated stylesheet section 04: style-v053.css ===== */
+/* Novel Generation v0.5.4 — weighted prompt visualization with mobile-safe editing. */
+.ng-weight-editor {
+  position: relative;
+  width: 100%;
+  min-width: 0;
+}
+
+.ng-weight-editor > .ng-weight-textarea {
+  position: relative;
+  z-index: 2;
+  width: 100%;
+  background: transparent !important;
+  color: transparent !important;
+  -webkit-text-fill-color: transparent !important;
+  caret-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  text-shadow: none !important;
+}
+
+.ng-weight-editor > .ng-weight-textarea::placeholder {
+  color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  -webkit-text-fill-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  opacity: .42;
+}
+
+.ng-weight-editor > .ng-weight-textarea::selection {
+  background: rgba(120, 170, 255, .28);
+  color: transparent;
+  -webkit-text-fill-color: transparent;
+}
+
+.ng-weight-mirror {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  overflow: hidden;
+  box-sizing: border-box;
+  pointer-events: none;
+  color: var(--SmartThemeBodyColor, #efefef);
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  transition: opacity .12s ease;
+}
+
+.ng-weight-mirror-text {
+  box-sizing: border-box;
+  min-width: 100%;
+  min-height: 100%;
+  white-space: pre-wrap;
+  overflow-wrap: break-word;
+  word-break: normal;
+  transform-origin: top left;
+  will-change: transform;
+}
+
+/*
+ * Editing mode: show the real textarea text and hide the mirror.
+ * This is especially important on iOS Safari, where selection handles,
+ * autocorrect and the magnifier become difficult to use if the native
+ * textarea text is transparent while a separate mirror is visible.
+ */
+.ng-weight-editor:focus-within > .ng-weight-textarea {
+  background: var(--SmartThemeBlurTintColor, rgba(35, 35, 38, .96)) !important;
+  color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  -webkit-text-fill-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  caret-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+}
+
+.ng-weight-editor:focus-within > .ng-weight-textarea::selection {
+  background: rgba(120, 170, 255, .34) !important;
+  color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+  -webkit-text-fill-color: var(--SmartThemeBodyColor, #f1f1f1) !important;
+}
+
+.ng-weight-editor:focus-within > .ng-weight-mirror {
+  opacity: 0;
+  visibility: hidden;
+}
+
+.ng-weight-token {
+  position: relative;
+  border-radius: 3px;
+  background: var(--ng-weight-bg);
+  box-shadow: inset 0 -1px 0 var(--ng-weight-edge);
+  text-shadow:
+    0 0 var(--ng-weight-blur) var(--ng-weight-glow),
+    0 0 calc(var(--ng-weight-blur) * .55) var(--ng-weight-glow);
+  -webkit-box-decoration-break: clone;
+  box-decoration-break: clone;
+}
+
+.ng-weight-token.is-positive {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 88%, #ffd27a 12%);
+}
+
+.ng-weight-token.is-negative {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 88%, #8fd5ff 12%);
+}
+
+.ng-weight-number,
+.ng-weight-delimiter {
+  opacity: .76;
+}
+
+.ng-weight-tag {
+  font-weight: 650;
+}
+
+.ng-weight-hint {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px 12px;
+  margin-top: 6px;
+  font-size: .78em;
+  line-height: 1.35;
+  opacity: .68;
+}
+
+.ng-weight-hint-positive {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 76%, #ffcb6b 24%);
+}
+
+.ng-weight-hint-negative {
+  color: color-mix(in srgb, var(--SmartThemeBodyColor, #efefef) 76%, #83ccff 24%);
+}
+
+.ng-weight-edit-note {
+  opacity: .72;
+}
+
+@media (max-width: 650px) {
+  .ng-weight-hint {
+    display: grid;
+    gap: 3px;
+    margin-top: 5px;
+    font-size: .73em;
+  }
+
+  .ng-weight-editor > .ng-weight-textarea {
+    font-size: 16px !important;
+    line-height: 1.42 !important;
+    min-height: 150px;
+    padding: 11px 12px !important;
+  }
+
+  .ng-weight-token {
+    text-shadow:
+      0 0 calc(var(--ng-weight-blur) * .82) var(--ng-weight-glow),
+      0 0 calc(var(--ng-weight-blur) * .42) var(--ng-weight-glow);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ng-weight-token,
+  .ng-weight-mirror {
+    transition: none !important;
+  }
+}
+
+
+/* ===== Consolidated stylesheet section 05: style-v055.css ===== */
+/* Novel Generation v0.5.5 — mobile workspace + AI Prompt Helper. */
+.ng-v055-mobile-nav { display: none; }
+
+.ng-v055-ai-helper .ng-v055-ai-options {
+  display: grid;
+  gap: 7px;
+  margin: 8px 0 10px;
+}
+
+.ng-v055-ai-helper #ng-v055-ai-status {
+  display: block;
+  margin-top: 7px;
+}
+
+.ng-v055-ai-helper .ng-v055-ai-apply {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+}
+
+@media (max-width: 650px) {
+  #ng-studio-overlay .ng-studio-shell {
+    height: 100dvh !important;
+    max-height: 100dvh !important;
+    display: flex !important;
+    flex-direction: column !important;
+    overflow: hidden !important;
+  }
+
+  #ng-studio-overlay .ng-studio-header {
+    flex: 0 0 auto;
+  }
+
+  .ng-v055-mobile-nav {
+    display: grid;
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 7px;
+    padding: 8px 10px;
+    flex: 0 0 auto;
+    border-bottom: 1px solid rgba(255,255,255,.09);
+    background: var(--SmartThemeBlurTintColor, rgba(24,24,24,.96));
+    z-index: 7;
+  }
+
+  .ng-v055-mobile-nav .menu_button {
+    min-width: 0;
+    min-height: 44px;
+    padding: 7px 8px;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    gap: 6px;
+    font-size: .92rem;
+    white-space: nowrap;
+  }
+
+  .ng-v055-mobile-nav .menu_button.is-active {
+    border-color: var(--SmartThemeQuoteColor, rgba(255,255,255,.38));
+    background: rgba(255,255,255,.09);
+    box-shadow: inset 0 0 0 1px rgba(255,255,255,.05);
+  }
+
+  #ng-studio-overlay .ng-studio-main {
+    display: block !important;
+    flex: 1 1 auto !important;
+    min-height: 0 !important;
+    overflow: hidden !important;
+    padding: 0 !important;
+  }
+
+  #ng-studio-overlay .ng-studio-preview,
+  #ng-studio-overlay .ng-studio-controls {
+    width: 100% !important;
+    height: 100% !important;
+    min-height: 0 !important;
+    max-height: none !important;
+  }
+
+  #ng-studio-overlay[data-ng-mobile-pane="controls"] .ng-studio-preview {
+    display: none !important;
+  }
+
+  #ng-studio-overlay[data-ng-mobile-pane="preview"] .ng-studio-controls {
+    display: none !important;
+  }
+
+  #ng-studio-overlay[data-ng-mobile-pane="preview"] .ng-studio-footer {
+    display: none !important;
+  }
+
+  #ng-studio-overlay .ng-studio-controls {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px 12px calc(18px + env(safe-area-inset-bottom)) !important;
+    box-sizing: border-box;
+  }
+
+  #ng-studio-overlay .ng-studio-tabs {
+    display: none !important;
+  }
+
+  #ng-studio-overlay .ng-studio-preview {
+    overflow-y: auto !important;
+    -webkit-overflow-scrolling: touch;
+    padding: 10px !important;
+    box-sizing: border-box;
+  }
+
+  #ng-studio-overlay .ng-studio-preview img {
+    width: 100% !important;
+    height: auto !important;
+    max-height: calc(100dvh - 225px) !important;
+    object-fit: contain !important;
+  }
+
+  #ng-studio-overlay .ng-studio-section > summary {
+    min-height: 54px;
+    padding-top: 12px;
+    padding-bottom: 12px;
+  }
+
+  #ng-studio-overlay .ng-studio-section-body {
+    padding-left: 8px;
+    padding-right: 8px;
+  }
+
+  #ng-studio-overlay .ng-studio-footer {
+    flex: 0 0 auto;
+    padding-bottom: max(10px, env(safe-area-inset-bottom)) !important;
+  }
+
+  .ng-v055-ai-helper textarea.text_pole {
+    font-size: 16px !important;
+    min-height: 104px;
+  }
+
+  .ng-v055-ai-helper .ng-v055-ai-apply {
+    grid-template-columns: 1fr;
   }
 }

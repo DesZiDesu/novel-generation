@@ -23,4 +23,4 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 
 ## Current scope
 
-The UI and connection layer are implemented. The advanced generation workflows are staged in the interface, but provider-specific generation payloads still need to be wired after confirming the proxy's supported NovelAI-specific parameters for Vibe Transfer, Precise Reference, Inpainting, Image-to-Image, and multi-character generation.
+The runtime and stylesheet are consolidated into one file each. The current UI and connection layer include persistent API-key storage, model discovery, NovelAI-aware payload routing, Vibe Transfer encoder adapters, separate Character Prompts, image editing, gallery/export, mobile Studio navigation, and the Prompt Assistant. Provider-specific route differences are handled through explicit adapter attempts and surfaced in Request Debug when unsupported.
