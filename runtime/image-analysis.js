@@ -101,7 +101,11 @@
 
   function analysisModel(s) {
     const a = s.imageAnalysis || {};
-    return String(a.model || s.analysisModel || s.model || '').trim();
+    const explicit = String(a.model || s.analysisModel || '').trim();
+    if (explicit) return explicit;
+    const configured = String(s.model || '').trim();
+    if (/nai-diffusion|stable-diffusion|sdxl|flux|image-generation/i.test(configured)) return '';
+    return configured;
   }
 
   function systemInstruction() {
