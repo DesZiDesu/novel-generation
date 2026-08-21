@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.3.0';
+const VERSION = '0.5.8';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
