@@ -25,3 +25,16 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 ## Current scope
 
 The runtime and stylesheet are consolidated into one file each. The current UI and connection layer include persistent API-key storage, proxy model discovery, a Direct NovelAI provider mode, official native image routing, Vibe Transfer encoding, separate Character Prompts, Precise Reference, image editing, gallery/export, mobile Studio navigation, and the Prompt Assistant. Provider-specific route differences are handled through explicit adapter attempts and surfaced in Request Debug when unsupported.
+
+## Full Photo Analysis
+
+The **Image Prompt Analyzer** is available from the SillyTavern Extensions wand menu.
+
+- Select an image from the device, drag and drop it, replace it, or remove it.
+- Ask for a transformation or emphasis, such as changing the background or preserving a specific outfit.
+- Choose **Pure tags prompt** for one comma-separated tag line, or **Native-language prompt** for one polished prompt paragraph.
+- Choose the output language and a vision-capable model. The analyzer reuses the existing OpenAI-compatible proxy Base URL and key; it does not create a second credential.
+- Copy the result or download it as a text file. Large images are resized only for analysis to keep requests practical.
+- Direct NovelAI image generation is not a vision endpoint, so an OpenAI-compatible vision model must be configured for photo analysis.
+
+Each click on **Analyze image** makes one vision chat-completion request.

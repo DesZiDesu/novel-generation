@@ -1,18 +1,23 @@
 // Novel Generation consolidated runtime loader.
-const NG_RUNTIME_FILE = 'runtime/novel-generation.js';
+const NG_RUNTIME_FILES = [
+  'runtime/novel-generation.js',
+  'runtime/image-analysis.js',
+];
 async function loadNovelGenerationRuntime() {
   if (globalThis.__novelGenerationRuntimeReady || globalThis.__novelGenerationRuntimeLoading) return;
   globalThis.__novelGenerationRuntimeLoading = true;
   try {
-    await new Promise((resolve, reject) => {
-      const script = document.createElement('script');
-      script.src = new URL('./' + NG_RUNTIME_FILE, import.meta.url).href;
-      script.async = false;
-      script.dataset.novelGenerationPart = NG_RUNTIME_FILE;
-      script.onload = resolve;
-      script.onerror = () => reject(new Error('Failed to load ' + NG_RUNTIME_FILE));
-      (document.head || document.documentElement).appendChild(script);
-    });
+    for (const file of NG_RUNTIME_FILES) {
+      await new Promise((resolve, reject) => {
+        const script = document.createElement('script');
+        script.src = new URL('./' + file, import.meta.url).href;
+        script.async = false;
+        script.dataset.novelGenerationPart = file;
+        script.onload = resolve;
+        script.onerror = () => reject(new Error('Failed to load ' + file));
+        (document.head || document.documentElement).appendChild(script);
+      });
+    }
     globalThis.__novelGenerationRuntimeReady = true;
   } finally {
     globalThis.__novelGenerationRuntimeLoading = false;
