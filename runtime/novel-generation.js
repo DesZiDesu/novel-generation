@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.0';
+const VERSION = '0.6.1';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -3895,8 +3895,12 @@ function ngV055ApplyPrompt(text, append) {
   if (!studio) return;
   var next = String(text || '').trim();
   if (!next) return;
+  var output = document.getElementById('ng-v055-ai-output');
+  var nativePrompt = output?.dataset?.ngPromptFormat === 'native';
   studio.prompt = append && studio.prompt
-    ? (typeof ngV040AppendTags === 'function' ? ngV040AppendTags(studio.prompt, ngV055NormalizeAiTags(next)) : studio.prompt.replace(/\s*,?\s*$/, '') + ', ' + next)
+    ? (nativePrompt
+      ? studio.prompt.trimEnd() + '\n' + next
+      : (typeof ngV040AppendTags === 'function' ? ngV040AppendTags(studio.prompt, ngV055NormalizeAiTags(next)) : studio.prompt.replace(/\s*,?\s*$/, '') + ', ' + next))
     : next;
   var textarea = document.getElementById('ng-prompt');
   if (textarea) {
@@ -3922,7 +3926,10 @@ async function ngV055RunAiHelper() {
     var reply = await context.generateQuietPrompt({ quietPrompt: ngV055AiInstruction(idea) });
     var finalPrompt = ngV055BuildAiPrompt(reply);
     if (!finalPrompt) throw new Error('The AI returned no usable tags.');
-    if (output) output.value = finalPrompt;
+    if (output) {
+      output.value = finalPrompt;
+      output.dataset.ngPromptFormat = 'tags';
+    }
     if (status) status.textContent = 'Tags ready. Review them, then replace or append to Prompt.';
   } catch (error) {
     console.error('[Novel Generation] AI Prompt Helper failed:', error);
@@ -3936,15 +3943,15 @@ function ngV055AiHelperHtml() {
   return '<details id="ng-v055-ai-helper" class="ng-studio-section ng-v055-ai-helper" data-focus="ai-helper">'
     + '<summary><i class="fa-solid fa-wand-magic-sparkles"></i><span>AI Prompt Helper</span><i class="fa-solid fa-chevron-down"></i></summary>'
     + '<div class="ng-studio-section-body">'
-    + '<p class="ng-muted">Describe the image naturally in Thai, English, or another language. The helper uses your current SillyTavern AI connection to convert it into NovelAI/Danbooru-style tags.</p>'
-    + '<label class="ng-field"><span class="ng-label">Image idea</span><textarea id="ng-v055-ai-input" class="text_pole" rows="4" placeholder="ผู้หญิงใส่เสื้อแจ็คเก็ตยืนตากแดดที่สี่แยกเมืองชินจูกุ"></textarea></label>'
+    + '<p class="ng-muted">Describe the image naturally in Thai, English, or another language, or attach a reference image below. Both tools write into the same editable prompt result.</p>'
+    + '<label class="ng-field"><span class="ng-label">Image idea / requested changes</span><textarea id="ng-v055-ai-input" class="text_pole" rows="4" placeholder="ผู้หญิงใส่เสื้อแจ็คเก็ตยืนตากแดดที่สี่แยกเมืองชินจูกุ"></textarea></label>'
     + '<div class="ng-v055-ai-options">'
     + '<label class="checkbox_label"><input id="ng-v055-ai-quality" type="checkbox" ' + (prefs.aiHelperQuality ? 'checked' : '') + '><span>Add model-aware Quality Tags</span></label>'
     + '<label class="checkbox_label"><input id="ng-v055-ai-artists" type="checkbox" ' + (prefs.aiHelperArtists ? 'checked' : '') + '><span>Add selected Danbooru artist mix</span></label>'
     + '<label class="checkbox_label"><input id="ng-v055-ai-suggest" type="checkbox" ' + (prefs.aiHelperSuggestions ? 'checked' : '') + '><span>Add local Suggest Tags</span></label>'
     + '</div><div class="ng-actions"><button id="ng-v055-ai-run" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> Convert to Tags</button></div>'
     + '<small id="ng-v055-ai-status" class="ng-help">Uses the same AI/model currently selected in SillyTavern and consumes one text-generation call.</small>'
-    + '<label class="ng-field"><span class="ng-label">Generated tags</span><textarea id="ng-v055-ai-output" class="text_pole" rows="6" placeholder="AI-generated tags appear here…"></textarea></label>'
+    + '<label class="ng-field"><span class="ng-label">Generated prompt</span><textarea id="ng-v055-ai-output" class="text_pole" rows="6" placeholder="AI-generated tags appear here…"></textarea></label>'
     + '<div class="ng-actions ng-v055-ai-apply"><button id="ng-v055-ai-replace" class="menu_button" type="button">Replace Prompt</button><button id="ng-v055-ai-append" class="menu_button" type="button">Append to Prompt</button></div>'
     + '</div></details>';
 }
