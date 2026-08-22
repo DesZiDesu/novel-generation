@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.8';
+const VERSION = '0.6.9';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -60,6 +60,7 @@ let studioLaunchTimer = null;
 let studioLaunchSequence = 0;
 const gallery = [];
 const debugLog = [];
+const unavailableAutoRoutes = new Set();
 
 const ctx = () => SillyTavern.getContext();
 const clone = value => typeof structuredClone === 'function'
@@ -1394,28 +1395,70 @@ async function generateState(state, label = 'Generating…') {
 
 
 /* ===== Consolidated runtime section 07: runtime/parts/v030-07.js ===== */
+function ngImageCandidatesFromText(value) {
+  const text = String(value || '').trim();
+  if (!text) return [];
+  const out = [];
+
+  // Chat-completion image proxies commonly put the complete image in the
+  // assistant's string content instead of OpenAI's `data[].b64_json` shape.
+  // Extract embedded data URLs first so Markdown wrappers and surrounding
+  // explanatory text cannot make the value fail validation.
+  const dataUrls = text.match(/data:image\/(?:png|jpe?g|webp|gif|avif);base64,[a-z0-9+/=\r\n]+/gi) || [];
+  out.push(...dataUrls.map(item => item.replace(/\s+/g, '')));
+
+  if (!out.length && /^(?:https?:\/\/|blob:|\/)/i.test(text)) out.push(norm(text));
+  if (!out.length && text.length > 200 && /^[a-z0-9+/=\s]+$/i.test(text)) {
+    out.push(`data:image/png;base64,${text.replace(/\s+/g, '')}`);
+  }
+  return out;
+}
+
 function extractImages(data) {
   const out = [];
+  const addText = value => out.push(...ngImageCandidatesFromText(value));
+  const addItem = item => {
+    if (typeof item === 'string') return addText(item);
+    if (!item || typeof item !== 'object') return;
+    if (item.b64_json) addText(`data:image/png;base64,${item.b64_json}`);
+    if (item.base64) addText(item.base64);
+    if (item.url) addText(item.url);
+    if (item.image_url?.url) addText(item.image_url.url);
+    if (typeof item.image_url === 'string') addText(item.image_url);
+    if (item.source?.data) addText(`data:${item.source.media_type || 'image/png'};base64,${item.source.data}`);
+  };
   const items = Array.isArray(data?.data) ? data.data : Array.isArray(data?.images) ? data.images : [];
-  for (const item of items) {
-    if (typeof item === 'string') out.push(norm(item));
-    else if (item?.b64_json) out.push(`data:image/png;base64,${item.b64_json}`);
-    else if (item?.base64) out.push(norm(item.base64));
-    else if (item?.url) out.push(norm(item.url));
-    else if (item?.image_url?.url) out.push(norm(item.image_url.url));
-  }
-  if (!out.length && data?.url) out.push(norm(data.url));
-  if (!out.length && data?.b64_json) out.push(`data:image/png;base64,${data.b64_json}`);
-  const message = data?.choices?.[0]?.message;
-  const content = message?.content;
-  if (Array.isArray(content)) {
-    for (const part of content) {
-      if (part?.image_url?.url) out.push(norm(part.image_url.url));
-      if (part?.b64_json) out.push(`data:image/png;base64,${part.b64_json}`);
+  items.forEach(addItem);
+  addItem(data);
+
+  // Support every choice rather than assuming only choices[0]. Providers use
+  // both a string content data URL and multipart image content in this route.
+  for (const choice of Array.isArray(data?.choices) ? data.choices : []) {
+    const message = choice?.message || choice?.delta || {};
+    const content = message.content;
+    if (Array.isArray(content)) {
+      for (const part of content) {
+        if (typeof part === 'string') addText(part);
+        else {
+          addItem(part);
+          if (typeof part?.text === 'string') addText(part.text);
+        }
+      }
+    } else if (typeof content === 'string') {
+      addText(content);
     }
+    if (Array.isArray(message.images)) message.images.forEach(addItem);
+    if (Array.isArray(choice?.images)) choice.images.forEach(addItem);
   }
-  if (message?.images && Array.isArray(message.images)) {
-    for (const image of message.images) out.push(norm(image?.image_url?.url || image?.url || image?.b64_json || ''));
+
+  // Also accept the OpenAI Responses API content layout used by some wrapper
+  // implementations even when the request itself used Chat Completions.
+  for (const output of Array.isArray(data?.output) ? data.output : []) {
+    addItem(output);
+    for (const part of Array.isArray(output?.content) ? output.content : []) {
+      addItem(part);
+      if (typeof part?.text === 'string') addText(part.text);
+    }
   }
   return [...new Set(out.filter(Boolean))];
 }
@@ -2142,7 +2185,7 @@ async function generateState(state, label = 'Generating…') {
     }
 
     const candidates = requestCandidates(state);
-    const routes = routeCandidates();
+    const routes = routeCandidates().filter(route => s.routeMode !== 'auto' || !unavailableAutoRoutes.has(route));
     for (const route of routes) {
       if (route === 'chat' && (hasAdvancedReferences(state) || state.source)) continue;
       for (const candidate of candidates) {
@@ -2152,6 +2195,13 @@ async function generateState(state, label = 'Generating…') {
           failures.push(`${route}/${candidate.name}: ${error.message}`);
           if (error.name === 'AbortError') throw error;
           if (error.status === 401 || error.status === 403) throw error;
+          // A missing endpoint is independent of payload schema. In Auto mode,
+          // do not submit the same generation two more times to the same 404
+          // route; remember it for this page session and proceed to chat.
+          if (error.status === 404 && s.routeMode === 'auto') {
+            unavailableAutoRoutes.add(route);
+            break;
+          }
           if (error.status === 200) continue;
         }
       }

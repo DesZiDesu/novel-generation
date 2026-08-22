@@ -3,10 +3,10 @@
   "loading_order": 10,
   "requires": [],
   "optional": [],
-  "js": "bootstrap-v068.js",
+  "js": "bootstrap-v069.js",
   "css": "style-v068.css",
   "author": "DesZiDesu",
-  "version": "0.6.8",
+  "version": "0.6.9",
   "homePage": "https://github.com/DesZiDesu/novel-generation",
   "auto_update": true
 }
