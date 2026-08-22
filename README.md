@@ -28,7 +28,7 @@ The runtime and stylesheet are consolidated into one file each. The current UI a
 
 ## Full Photo Analysis
 
-The **Image Prompt Analyzer** is available from the SillyTavern Extensions wand menu.
+The **Reference Image Analysis** workspace is available inside Novel Gen → AI Prompt Helper.
 
 - Select an image from the device, drag and drop it, replace it, or remove it.
 - Ask for a transformation or emphasis, such as changing the background or preserving a specific outfit.
@@ -38,3 +38,14 @@ The **Image Prompt Analyzer** is available from the SillyTavern Extensions wand 
 - Direct NovelAI image generation is not a vision endpoint, so an OpenAI-compatible vision model must be configured for photo analysis.
 
 Each click on **Analyze image** makes one vision chat-completion request.
+
+## Artist Mix and numerical emphasis
+
+- Selected Danbooru artists are stored as a structured Artist Mix instead of being repeatedly appended to the editable prompt.
+- The mix is composed exactly once when generation starts and is sent consistently through Direct NovelAI and compatible proxy payloads.
+- Artist tags are placed after any leading `fur dataset` or `background dataset` tag and before the main prompt.
+- **Effective Prompt Preview** shows the exact composed prompt before generation.
+- Artist emphasis updates live on iOS: `1.0` is neutral, values below `1.0` weaken, values above `1.0` strengthen, and negative values target removal or inversion where the selected model supports them.
+- **Clean old artist tags** removes artist tags embedded by older extension releases, while **Lock comparison seed** makes A/B style balancing more repeatable.
+
+Equal emphasis values do not guarantee an equal-looking style blend. Artist tags can have different learned strength, so keep the comparison seed fixed and lower the dominant artist or raise the weaker one gradually.

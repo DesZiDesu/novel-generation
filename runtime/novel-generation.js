@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.6';
+const VERSION = '0.6.7';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -3836,7 +3836,7 @@ function ngV053AttachWeightedEditor(textarea) {
   if (textarea.id === 'ng-prompt') {
     var hint = document.createElement('small');
     hint.className = 'ng-weight-hint';
-    hint.innerHTML = '<span class="ng-weight-hint-positive">1::tag:: positive emphasis</span><span class="ng-weight-hint-negative">-1::tag:: negative emphasis</span><span>Glow increases with magnitude and is capped for readability.</span><span class="ng-weight-edit-note">While typing, the glow pauses so mobile cursor and text selection stay precise.</span>';
+    hint.innerHTML = '<span class="ng-weight-hint-positive">1.5::tag:: stronger</span><span>1.0 is neutral · 0.5 weakens</span><span class="ng-weight-hint-negative">-1::tag:: targeted removal / inversion</span><span>Glow increases with magnitude and is capped for readability.</span><span class="ng-weight-edit-note">While typing, the glow pauses so mobile cursor and text selection stay precise.</span>';
     wrapper.insertAdjacentElement('afterend', hint);
   }
 }
@@ -4581,3 +4581,318 @@ closeStudio = function () {
   ngSaveStudioDraft();
   return ngDraftBaseCloseStudio();
 };
+
+
+/* ===== Consolidated runtime section 17: Artist Mix reliability ===== */
+// Novel Generation v0.6.7 — structured, idempotent artist emphasis.
+//
+// Older releases wrote the selected artists directly into the editable prompt.
+// Changing a weight and pressing Apply again produced a second weighted tag,
+// because deduplication compared the entire string instead of the artist name.
+// Keep the mix in extension settings now and compose it exactly once for the
+// request. This also gives iOS a live input path instead of waiting for blur.
+var NG_V067_RELEASE = VERSION;
+
+function ngV067ArtistPrefs() {
+  var prefs = ngV040Prefs();
+  if (!('artistMixEnabled' in prefs)) prefs.artistMixEnabled = prefs.useArtistsQuick !== false;
+  if (!Array.isArray(prefs.artistMixManagedNames)) prefs.artistMixManagedNames = [];
+  for (var item of prefs.selectedArtists) {
+    var name = String(item?.name || '').trim();
+    if (name && !prefs.artistMixManagedNames.includes(name)) prefs.artistMixManagedNames.push(name);
+  }
+  prefs.artistMixManagedNames = prefs.artistMixManagedNames.slice(-100);
+  return prefs;
+}
+
+function ngV067ClampArtistWeight(value, fallback) {
+  var number = Number(value);
+  if (!Number.isFinite(number)) number = Number.isFinite(Number(fallback)) ? Number(fallback) : 1;
+  return Math.max(-3, Math.min(3, Math.round(number * 100) / 100));
+}
+
+function ngV067ArtistDisplayName(value) {
+  return String(value || '').replace(/_/g, ' ').trim().replace(/\s+/g, ' ');
+}
+
+function ngV067EscapeRegExp(value) {
+  return String(value).replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+}
+
+function ngV067RemoveManagedArtistTags(prompt) {
+  var text = String(prompt || '');
+  var prefs = ngV067ArtistPrefs();
+  var names = [...new Set([
+    ...prefs.artistMixManagedNames,
+    ...prefs.selectedArtists.map(function (item) { return item?.name; }),
+  ].map(ngV067ArtistDisplayName).filter(Boolean))];
+
+  for (var name of names) {
+    var variants = [...new Set([name, name.replace(/\s+/g, '_')])];
+    for (var variant of variants) {
+      var escaped = ngV067EscapeRegExp(variant);
+      var pattern = new RegExp(
+        '(^|,\\s*)(?:-?(?:\\d+(?:\\.\\d+)?|\\.\\d+)::\\s*)?' + escaped + '(?:\\s*::)?(?=\\s*,|\\s*$)',
+        'gi',
+      );
+      text = text.replace(pattern, function (_match, prefix) { return prefix && prefix.includes(',') ? ',' : ''; });
+    }
+  }
+
+  return text
+    .replace(/\s*,\s*,+/g, ', ')
+    .replace(/^\s*,\s*|\s*,\s*$/g, '')
+    .replace(/,\s+/g, ', ')
+    .replace(/[ \t]+\n/g, '\n')
+    .trim();
+}
+
+ngV040ArtistPromptTags = function () {
+  return ngV067ArtistPrefs().selectedArtists.map(function (item) {
+    var name = ngV067ArtistDisplayName(item?.name);
+    if (!name) return '';
+    var weight = ngV067ClampArtistWeight(item?.weight, 1);
+    return Math.abs(weight - 1) < 0.001 ? name : weight + '::' + name + ' ::';
+  }).filter(Boolean);
+};
+
+function ngV067SplitDatasetPrefix(prompt) {
+  var parts = ngV040PromptParts(prompt);
+  var dataset = [];
+  while (parts.length && /^(?:fur|background) dataset$/i.test(parts[0])) dataset.push(parts.shift());
+  return { dataset: dataset, rest: parts.join(', ') };
+}
+
+function ngV067ComposeArtistPrompt(prompt, enabled) {
+  var cleaned = ngV067RemoveManagedArtistTags(prompt);
+  if (!enabled) return cleaned;
+  var artists = ngV040ArtistPromptTags();
+  if (!artists.length) return cleaned;
+  var split = ngV067SplitDatasetPrefix(cleaned);
+  return [...split.dataset, ...artists, split.rest].filter(Boolean).join(', ');
+}
+
+function ngV067EffectivePrompt(prompt) {
+  var prefs = ngV067ArtistPrefs();
+  var effective = ngV067ComposeArtistPrompt(prompt, prefs.artistMixEnabled !== false);
+  var image = settings().image || {};
+  return [image.prefix, effective, image.suffix]
+    .map(function (part) { return String(part || '').trim(); })
+    .filter(Boolean)
+    .join(', ');
+}
+
+function ngV067SyncArtistInput(input) {
+  var item = ngV067ArtistPrefs().selectedArtists[Number(input?.dataset?.index)];
+  if (!item || !input) return;
+  item.weight = ngV067ClampArtistWeight(input.value, item.weight);
+  input.value = item.weight;
+  save();
+  ngV067RefreshArtistMixUi();
+}
+
+ngV040RenderSelectedArtists = function () {
+  var root = document.getElementById('ng-v040-selected-artists');
+  if (!root) return;
+  var prefs = ngV067ArtistPrefs();
+  var items = prefs.selectedArtists;
+  root.innerHTML = items.length ? items.map(function (item, index) {
+    return '<div class="ng-v040-artist-chip">'
+      + '<span>' + esc(ngV067ArtistDisplayName(item.name)) + '</span>'
+      + '<label>Emphasis <input class="text_pole ng-v040-artist-weight" data-index="' + index + '" type="number" inputmode="decimal" min="-3" max="3" step="0.1" value="' + ngV067ClampArtistWeight(item.weight, 1) + '"></label>'
+      + '<button class="menu_button ng-v040-artist-remove" data-index="' + index + '" type="button" title="Remove"><i class="fa-solid fa-xmark"></i></button>'
+      + '</div>';
+  }).join('') : '<small class="ng-help">No artists selected. Select multiple artists to build a style mix.</small>';
+
+  root.querySelectorAll('.ng-v040-artist-weight').forEach(function (input) {
+    input.addEventListener('input', function () { ngV067SyncArtistInput(input); });
+    input.addEventListener('change', function () { ngV067SyncArtistInput(input); });
+  });
+  root.querySelectorAll('.ng-v040-artist-remove').forEach(function (button) {
+    button.addEventListener('click', function () {
+      var removed = prefs.selectedArtists.splice(Number(button.dataset.index), 1)[0];
+      var name = String(removed?.name || '').trim();
+      if (name && !prefs.artistMixManagedNames.includes(name)) prefs.artistMixManagedNames.push(name);
+      save();
+      ngV040RenderSelectedArtists();
+      ngV067RefreshArtistMixUi();
+    });
+  });
+  ngV067RefreshArtistMixUi();
+};
+
+function ngV067CleanPromptEditor() {
+  if (!studio) return;
+  studio.prompt = ngV067RemoveManagedArtistTags(studio.prompt);
+  var textarea = document.getElementById('ng-prompt');
+  if (textarea) {
+    textarea.value = studio.prompt;
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  ngV067RefreshArtistMixUi();
+  toast('success', 'Old managed artist tags were removed. The selected mix will be added once when you generate.');
+}
+
+function ngV067LockComparisonSeed() {
+  if (!studio) return;
+  if (!Number.isFinite(Number(studio.seed)) || Number(studio.seed) < 0) {
+    studio.seed = Math.floor(Math.random() * 4294967295);
+  }
+  var input = document.getElementById('ng-studio-seed');
+  if (input) {
+    input.value = studio.seed;
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+  }
+  toast('success', 'Comparison seed locked to ' + studio.seed + '. Keep it unchanged while balancing styles.');
+}
+
+function ngV067RefreshArtistMixUi() {
+  var prefs = ngV067ArtistPrefs();
+  var toggle = document.getElementById('ng-v067-artist-enabled');
+  if (toggle) toggle.checked = prefs.artistMixEnabled !== false;
+  var drawerToggle = document.getElementById('ng-v040-quick-artists');
+  if (drawerToggle) drawerToggle.checked = prefs.artistMixEnabled !== false;
+  var preview = document.getElementById('ng-v067-effective-prompt');
+  if (preview) preview.value = ngV067EffectivePrompt(studio?.prompt || '');
+  var state = document.getElementById('ng-v067-artist-state');
+  if (state) {
+    var count = prefs.selectedArtists.length;
+    state.textContent = prefs.artistMixEnabled !== false && count
+      ? count + ' artist' + (count === 1 ? '' : 's') + ' will be inserted once when Generate is pressed.'
+      : 'Artist Mix is currently disabled for generation.';
+  }
+}
+
+function ngV067ArtistMixControlsHtml() {
+  var prefs = ngV067ArtistPrefs();
+  return '<div id="ng-v067-artist-controls" class="ng-v067-artist-controls">'
+    + '<label class="checkbox_label"><input id="ng-v067-artist-enabled" type="checkbox" ' + (prefs.artistMixEnabled !== false ? 'checked' : '') + '><span>Use this Artist Mix when generating</span></label>'
+    + '<small class="ng-help">Emphasis is not a percentage: 1.0 is neutral, below 1.0 weakens, and above 1.0 strengthens. Equal numbers cannot guarantee an equal-looking blend.</small>'
+    + '<div class="ng-actions"><button id="ng-v067-update-mix" class="menu_button" type="button"><i class="fa-solid fa-arrows-rotate"></i> Update mix</button>'
+    + '<button id="ng-v067-clean-prompt" class="menu_button" type="button"><i class="fa-solid fa-broom"></i> Clean old artist tags</button>'
+    + '<button id="ng-v067-lock-seed" class="menu_button" type="button"><i class="fa-solid fa-lock"></i> Lock comparison seed</button></div>'
+    + '<small id="ng-v067-artist-state" class="ng-help"></small>'
+    + '<label class="ng-field"><span class="ng-label">Effective Prompt Preview</span><textarea id="ng-v067-effective-prompt" class="text_pole" rows="5" readonly></textarea><small class="ng-help">This is the composed prompt sent to Direct NovelAI and compatible proxy payloads. Artist tags are inserted after dataset tags and before the main prompt.</small></label>'
+    + '</div>';
+}
+
+function ngV067EnhanceArtistMixUi() {
+  var assistant = document.getElementById('ng-v040-assistant');
+  var selected = document.getElementById('ng-v040-selected-artists');
+  if (!assistant || !selected) return;
+
+  if (!document.getElementById('ng-v067-artist-controls')) {
+    selected.insertAdjacentHTML('afterend', ngV067ArtistMixControlsHtml());
+  }
+
+  // Replace the old button node to discard its append-to-prompt listener.
+  var oldApply = document.getElementById('ng-v040-apply-artists');
+  if (oldApply && !oldApply.dataset.ngV067Replaced) {
+    var replacement = oldApply.cloneNode(true);
+    replacement.dataset.ngV067Replaced = '1';
+    replacement.hidden = true;
+    replacement.setAttribute('aria-hidden', 'true');
+    oldApply.replaceWith(replacement);
+  }
+
+  var aiArtistOption = document.getElementById('ng-v055-ai-artists')?.closest('label');
+  if (aiArtistOption) aiArtistOption.hidden = true;
+
+  var controls = document.getElementById('ng-v067-artist-controls');
+  if (controls && !controls.dataset.bound) {
+    controls.dataset.bound = '1';
+    document.getElementById('ng-v067-artist-enabled')?.addEventListener('change', function (event) {
+      var prefs = ngV067ArtistPrefs();
+      prefs.artistMixEnabled = event.currentTarget.checked;
+      prefs.useArtistsQuick = event.currentTarget.checked;
+      save();
+      ngV067RefreshArtistMixUi();
+    });
+    document.getElementById('ng-v067-update-mix')?.addEventListener('click', function () {
+      document.querySelectorAll('.ng-v040-artist-weight').forEach(ngV067SyncArtistInput);
+      ngV067ArtistPrefs().artistMixEnabled = true;
+      save();
+      ngV067RefreshArtistMixUi();
+      toast('success', 'Artist Mix updated. It will be inserted once when you generate.');
+    });
+    document.getElementById('ng-v067-clean-prompt')?.addEventListener('click', ngV067CleanPromptEditor);
+    document.getElementById('ng-v067-lock-seed')?.addEventListener('click', ngV067LockComparisonSeed);
+  }
+
+  var prompt = document.getElementById('ng-prompt');
+  if (prompt && !prompt.dataset.ngV067PreviewBound) {
+    prompt.dataset.ngV067PreviewBound = '1';
+    prompt.addEventListener('input', ngV067RefreshArtistMixUi);
+  }
+  ngV067RefreshArtistMixUi();
+}
+
+function ngV067EnhanceDrawer() {
+  var toggle = document.getElementById('ng-v040-quick-artists');
+  if (!toggle) return;
+  var copy = toggle.closest('label')?.querySelector('span');
+  if (copy) copy.textContent = 'Use selected Danbooru Artist Mix for generation';
+  toggle.checked = ngV067ArtistPrefs().artistMixEnabled !== false;
+  if (!toggle.dataset.ngV067Bound) {
+    toggle.dataset.ngV067Bound = '1';
+    toggle.addEventListener('change', function (event) {
+      var prefs = ngV067ArtistPrefs();
+      prefs.artistMixEnabled = event.currentTarget.checked;
+      prefs.useArtistsQuick = event.currentTarget.checked;
+      save();
+      ngV067RefreshArtistMixUi();
+    });
+  }
+}
+
+// Artist mix is structured separately, so AI Prompt Helper should not bake a
+// second copy into its editable result. Suggestions and quality tags remain.
+ngV055BuildAiPrompt = function (raw) {
+  var prefs = ngV055Prefs();
+  var prompt = ngV055NormalizeAiTags(raw).join(', ');
+  if (prefs.aiHelperSuggestions) prompt = ngV040AppendTags(prompt, ngV040SuggestTags(prompt));
+  if (prefs.aiHelperQuality) prompt = ngV040AppendTags(prompt, ngV040ModelQualityTags());
+  return prompt.trim();
+};
+
+var ngV067BaseNewStudio = newStudio;
+newStudio = function (mode, focus) {
+  var state = ngV067BaseNewStudio(mode, focus);
+  state.artistMixEnabled = ngV067ArtistPrefs().artistMixEnabled !== false;
+  return state;
+};
+
+var ngV067BaseGenerateState = generateState;
+generateState = async function (state, label) {
+  var originalPrompt = state?.prompt;
+  if (state && typeof originalPrompt === 'string') {
+    var enabled = state.artistMixEnabled !== false && ngV067ArtistPrefs().artistMixEnabled !== false;
+    state.prompt = ngV067ComposeArtistPrompt(originalPrompt, enabled);
+  }
+  try {
+    return await ngV067BaseGenerateState(state, label);
+  } finally {
+    if (state && typeof originalPrompt === 'string') state.prompt = originalPrompt;
+  }
+};
+
+var ngV067BaseOpenStudio = openStudio;
+openStudio = function (mode, focus) {
+  var result = ngV067BaseOpenStudio.apply(this, arguments);
+  setTimeout(ngV067EnhanceArtistMixUi, 0);
+  return result;
+};
+
+var ngV067BaseInstallDrawer = ngV040InstallDrawer;
+ngV040InstallDrawer = function () {
+  var result = ngV067BaseInstallDrawer.apply(this, arguments);
+  setTimeout(ngV067EnhanceDrawer, 0);
+  return result;
+};
+
+document.addEventListener('novel-generation:studio-ready', function () {
+  setTimeout(ngV067EnhanceArtistMixUi, 0);
+});
+
+ngV067ArtistPrefs();
+ngV067EnhanceDrawer();
