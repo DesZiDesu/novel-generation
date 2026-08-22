@@ -133,8 +133,19 @@
   margin-right: 2px;
 }
 
-body.ng-studio-open { overflow: hidden !important; }
+body.ng-studio-open {
+  overflow: hidden !important;
+  pointer-events: none !important;
+}
+body.ng-studio-open * {
+  pointer-events: none !important;
+}
+html > #ng-studio-overlay,
+html > #ng-studio-overlay * {
+  pointer-events: auto !important;
+}
 body.ng-studio-open #extensionsMenu,
+body.ng-studio-open #astra-projecta-root,
 body.ng-studio-open #astra-send-form-extensions-drawer {
   visibility: hidden !important;
   opacity: 0 !important;
@@ -143,7 +154,7 @@ body.ng-studio-open #astra-send-form-extensions-drawer {
 .ng-studio-overlay {
   position: fixed !important;
   inset: 0 !important;
-  z-index: 2147483000 !important;
+  z-index: 2147483647 !important;
   display: flex !important;
   align-items: stretch;
   justify-content: stretch;

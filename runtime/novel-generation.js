@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.4';
+const VERSION = '0.6.5';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -56,6 +56,7 @@ let escapeHandler = null;
 let mountTimer = null;
 let mountAttempts = 0;
 let studioLaunchTimer = null;
+let studioLaunchSequence = 0;
 const gallery = [];
 const debugLog = [];
 
@@ -623,13 +624,46 @@ function recoverStaleStudioState() {
 }
 
 function scheduleStudioOpen(mode = 'free', focus = 'prompt') {
+  const sequence = ++studioLaunchSequence;
   if (studioLaunchTimer) clearTimeout(studioLaunchTimer);
-  const astraDrawer = document.getElementById('astra-send-form-extensions-drawer');
-  const delay = astraDrawer?.dataset.state === 'open' ? 120 : 0;
-  studioLaunchTimer = setTimeout(() => {
+  const initialDrawer = document.getElementById('astra-send-form-extensions-drawer');
+  const waitForAstra = Boolean(initialDrawer && initialDrawer.dataset.state !== 'closed');
+  const deadline = Date.now() + 2400;
+
+  const finishAfterPaint = () => {
+    const nextFrame = typeof requestAnimationFrame === 'function'
+      ? requestAnimationFrame
+      : callback => setTimeout(callback, 16);
+    nextFrame(() => nextFrame(() => {
+      if (sequence !== studioLaunchSequence) return;
+      studioLaunchTimer = null;
+      openStudio(mode, focus);
+    }));
+  };
+
+  const checkRelease = () => {
+    if (sequence !== studioLaunchSequence) return;
+    const drawer = document.getElementById('astra-send-form-extensions-drawer');
+    const host = document.getElementById('astra-send-form-extensions-menu-host');
+    const menu = document.getElementById('extensionsMenu');
+    const drawerOpen = Boolean(drawer && drawer.dataset.state !== 'closed');
+    const menuStillPortaled = Boolean(host && menu && host.contains(menu));
+
+    if (!waitForAstra || (!drawerOpen && !menuStillPortaled)) {
+      finishAfterPaint();
+      return;
+    }
+    if (Date.now() < deadline) {
+      studioLaunchTimer = setTimeout(checkRelease, 50);
+      return;
+    }
+
     studioLaunchTimer = null;
-    openStudio(mode, focus);
-  }, delay);
+    console.warn('[Novel Generation] AstraProjecta did not release its extensions drawer; Studio launch was cancelled to protect interaction.');
+    toast('warning', 'AstraProjecta is still closing its menu. Close the menu and tap Novel Gen again.');
+  };
+
+  studioLaunchTimer = setTimeout(checkRelease, 0);
 }
 
 function openStudio(mode = 'free', focus = 'prompt') {
@@ -688,7 +722,18 @@ function bindStudio() {
     switchTab('gallery');
     if (typeof ngV055SetMobilePane === 'function') ngV055SetMobilePane('controls');
   });
-  document.getElementById('ng-studio-overlay')?.addEventListener('pointerdown', event => event.stopPropagation());
+  const interactionSurface = document.getElementById('ng-studio-overlay');
+  interactionSurface?.addEventListener('pointerdown', event => {
+    event.stopPropagation();
+    const target = event.target instanceof Element
+      ? event.target.closest('textarea, input, select, [contenteditable="true"]')
+      : null;
+    if (target instanceof HTMLElement) {
+      try { target.focus({ preventScroll: true }); } catch { target.focus(); }
+    }
+  });
+  interactionSurface?.addEventListener('click', event => event.stopPropagation());
+  interactionSurface?.addEventListener('touchstart', event => event.stopPropagation(), { passive: true });
   document.querySelectorAll('#ng-studio-overlay .ng-studio-tabs [data-tab]').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
   document.getElementById('ng-prompt')?.addEventListener('input', event => { studio.prompt = event.currentTarget.value; });
   document.getElementById('ng-negative')?.addEventListener('input', event => { studio.negative = event.currentTarget.value; });
