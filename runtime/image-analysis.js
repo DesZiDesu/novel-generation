@@ -144,7 +144,9 @@
   }
 
   function cleanResult(value, preset) {
-    let text = String(value || '').trim();
+    let text = typeof ngV055ExtractAiFinal === 'function'
+      ? ngV055ExtractAiFinal(value, preset === 'tags')
+      : String(value || '').trim();
     text = text.replace(/^\x60\x60\x60[a-z0-9_-]*\s*/i, '').replace(/\s*\x60\x60\x60$/i, '').trim();
     if (preset === 'tags') {
       text = text
@@ -176,6 +178,7 @@
         ...sharedRules,
         'Write one polished, detailed image-generation prompt in ' + language + '.',
         'Return only the final prompt as one paragraph. No heading, explanation, markdown, or code fence.',
+        'Never emit <think>, <thinking>, <thoughts>, <planning>, <analysis>, or <reasoning> markup. Put the prompt in the final answer, never in a reasoning channel.',
       ].join('\n');
     }
     return [
@@ -183,6 +186,7 @@
       ...sharedRules,
       'Convert the image into precise NovelAI/Danbooru-style visual tags.',
       'Return only one comma-separated line of concise English tags. No sentences, heading, explanation, markdown, or code fence.',
+      'Never emit <think>, <thinking>, <thoughts>, <planning>, <analysis>, or <reasoning> markup. Put the tags in the final answer, never in a reasoning channel.',
       'Order tags roughly as subject/count, identity and appearance, clothing, action/pose/expression, location, weather/lighting, camera/composition, and style/details.',
       'Never invent artist names.',
     ].join('\n');

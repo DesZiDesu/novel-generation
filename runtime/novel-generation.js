@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.1';
+const VERSION = '0.6.2';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -3861,12 +3861,125 @@ function ngV055BindMobileAccordions() {
   });
 }
 
+function ngV055ExtractAiFinal(raw, preferTags) {
+  function readValue(value, allowReasoning, depth, seen) {
+    if (value == null || depth > 7) return '';
+    if (typeof value === 'string') return value.trim();
+    if (typeof value === 'number' || typeof value === 'boolean') return String(value);
+    if (Array.isArray(value)) {
+      return value.map(function (item) { return readValue(item, allowReasoning, depth + 1, seen); }).filter(Boolean).join('\n').trim();
+    }
+    if (typeof value !== 'object' || seen.has(value)) return '';
+    seen.add(value);
+
+    var preferred = ['final_answer', 'final', 'output_text', 'content', 'text', 'response', 'result', 'answer', 'message', 'output', 'choices'];
+    for (var i = 0; i < preferred.length; i += 1) {
+      if (!(preferred[i] in value)) continue;
+      var visible = readValue(value[preferred[i]], allowReasoning, depth + 1, seen);
+      if (visible) return visible;
+    }
+    if (allowReasoning) {
+      var reasoning = ['reasoning_content', 'thoughts', 'thinking', 'reasoning', 'analysis', 'planning'];
+      for (var j = 0; j < reasoning.length; j += 1) {
+        if (!(reasoning[j] in value)) continue;
+        var hidden = readValue(value[reasoning[j]], true, depth + 1, seen);
+        if (hidden) return hidden;
+      }
+    }
+    return '';
+  }
+
+  function tidy(value) {
+    return String(value || '')
+      .replace(/^\s*\x60\x60\x60(?:\w+)?\s*/i, '')
+      .replace(/\s*\x60\x60\x60\s*$/i, '')
+      .replace(/<\/?(?:think|thinking|thoughts|planning|analysis|reasoning)\b[^>]*>/gi, '')
+      .replace(/<\/?(?:final|answer|output)\b[^>]*>/gi, '')
+      .replace(/<\|(?:final|assistant|output)\|>/gi, '')
+      .trim();
+  }
+
+  function explicitFinal(value) {
+    var text = String(value || '');
+    var blocks = Array.from(text.matchAll(/<(?:final|answer|output)\b[^>]*>([\s\S]*?)<\/(?:final|answer|output)>/gi));
+    if (blocks.length) return tidy(blocks[blocks.length - 1][1]);
+    var markers = Array.from(text.matchAll(/(?:^|\n)\s*(?:final(?:\s+(?:answer|output|prompt|tags?))?|answer|output|prompt|tags?)\s*:\s*/gim));
+    if (markers.length) {
+      var marker = markers[markers.length - 1];
+      return tidy(text.slice((marker.index || 0) + marker[0].length));
+    }
+    return '';
+  }
+
+  function salvage(value) {
+    var text = tidy(value);
+    if (!text) return '';
+    var marked = explicitFinal(text);
+    if (marked) return marked;
+
+    var lines = text.split(/\n+/).map(function (line) {
+      return line.trim().replace(/^[•*-]\s*/, '');
+    }).filter(Boolean);
+    var useful = lines.filter(function (line) {
+      return !/^(?:we need|i need|i should|let(?:'s| us)|first(?:ly)?|next|then|the user|analysis|reasoning|plan(?:ning)?|thoughts?|thinking|consider|need to|task:)/i.test(line);
+    });
+    if (!useful.length) useful = lines;
+    if (!useful.length) return '';
+
+    if (preferTags) {
+      for (var i = useful.length - 1; i >= 0; i -= 1) {
+        if ((useful[i].match(/,/g) || []).length >= 2) return tidy(useful[i]);
+      }
+    }
+    return tidy(useful[useful.length - 1]);
+  }
+
+  var source = readValue(raw, false, 0, new Set()) || readValue(raw, true, 0, new Set());
+  if (!source) return '';
+
+  var directFinal = explicitFinal(source);
+  if (directFinal) return directFinal;
+
+  var hidden = [];
+  var visible = String(source);
+  visible = visible.replace(/<\|(?:analysis|reasoning|thinking|thoughts|planning)\|>([\s\S]*?)(?=<\|(?:final|assistant|output)\|>|$)/gi, function (_match, body) {
+    hidden.push(body);
+    return '\n';
+  });
+  visible = visible.replace(/<(think|thinking|thoughts|planning|analysis|reasoning)\b[^>]*>([\s\S]*?)<\/\1>/gi, function (_match, _name, body) {
+    hidden.push(body);
+    return '\n';
+  });
+
+  var dangling = /<(think|thinking|thoughts|planning|analysis|reasoning)\b[^>]*>/i.exec(visible);
+  if (dangling) {
+    hidden.push(visible.slice(dangling.index + dangling[0].length));
+    visible = visible.slice(0, dangling.index);
+  }
+
+  visible = tidy(visible
+    .replace(/<\/(?:think|thinking|thoughts|planning|analysis|reasoning)>/gi, '')
+    .replace(/<\|(?:analysis|reasoning|thinking|thoughts|planning)\|>/gi, ''));
+
+  var markedVisible = explicitFinal(visible);
+  if (markedVisible) return markedVisible;
+  if (visible) return visible;
+
+  for (var index = hidden.length - 1; index >= 0; index -= 1) {
+    var recovered = salvage(hidden[index]);
+    if (recovered) return recovered;
+  }
+  return '';
+}
+
 function ngV055NormalizeAiTags(raw) {
-  var text = String(raw || '').replace(/```(?:\w+)?/gi, '').replace(/```/g, '')
+  var text = ngV055ExtractAiFinal(raw, true).replace(/\x60\x60\x60(?:\w+)?/gi, '').replace(/\x60\x60\x60/g, '')
     .replace(/^\s*(?:tags?|prompt)\s*:\s*/i, '').replace(/\r/g, '\n').replace(/[;\n]+/g, ',');
   var seen = new Set();
-  return text.split(',').map(function (tag) { return tag.trim().replace(/^["'`]+|["'`]+$/g, '').replace(/\s+/g, ' '); })
-    .filter(Boolean).filter(function (tag) { var key = tag.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
+  return text.split(',').map(function (tag) { return tag.trim().replace(/^["'\x60]+|["'\x60]+$/g, '').replace(/\s+/g, ' '); })
+    .filter(Boolean)
+    .filter(function (tag) { return !/^<\/?(?:think|thinking|thoughts|planning|analysis|reasoning|final|answer|output)\b/i.test(tag); })
+    .filter(function (tag) { var key = tag.toLowerCase(); if (seen.has(key)) return false; seen.add(key); return true; });
 }
 
 function ngV055AiInstruction(userText) {
@@ -3878,6 +3991,7 @@ function ngV055AiInstruction(userText) {
     'Preserve known character names, franchise names, landmark/place names, clothing, actions, expressions, weather, lighting and camera framing.',
     'Order tags roughly as: subject/count, character identity, appearance/clothes, action/pose/expression, location/background, time/weather/lighting, camera/composition, style/details.',
     'Do not add weighted syntax unless the user explicitly supplied a weight. Do not add commentary.',
+    'Never emit <think>, <thinking>, <thoughts>, <planning>, <analysis>, or <reasoning> markup. Put the comma-separated prompt in the final answer, never in a reasoning channel.',
     '', 'USER IMAGE IDEA:', String(userText || '').trim(),
   ].join('\n');
 }
