@@ -135,9 +135,7 @@
 
 body.ng-studio-open { overflow: hidden !important; }
 body.ng-studio-open #extensionsMenu,
-body.ng-studio-open #astra-send-form-extensions-drawer,
-body.ng-studio-open .astra-drawer__overlay,
-body.ng-studio-open [data-ng-studio-suspended="true"] {
+body.ng-studio-open #astra-send-form-extensions-drawer {
   visibility: hidden !important;
   opacity: 0 !important;
   pointer-events: none !important;
@@ -152,6 +150,9 @@ body.ng-studio-open [data-ng-studio-suspended="true"] {
   padding: 0;
   isolation: isolate;
   opacity: 1 !important;
+  pointer-events: auto !important;
+  touch-action: manipulation;
+  overscroll-behavior: none;
   background: #090d10;
   box-sizing: border-box;
 }

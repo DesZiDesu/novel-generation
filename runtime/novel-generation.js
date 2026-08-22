@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.3';
+const VERSION = '0.6.4';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -55,7 +55,7 @@ let studio = null;
 let escapeHandler = null;
 let mountTimer = null;
 let mountAttempts = 0;
-let astraSuspendedLayers = [];
+let studioLaunchTimer = null;
 const gallery = [];
 const debugLog = [];
 
@@ -476,7 +476,7 @@ function initWand() {
 
   const studioRow = makeWandRow('ng-wand-studio', 'fa-wand-magic-sparkles', 'Novel Gen');
   anchor.insertAdjacentElement('afterend', studioRow);
-  bindPress(studioRow, () => openStudio('free', 'prompt'), { allowHostClose: true });
+  bindPress(studioRow, () => scheduleStudioOpen('free', 'prompt'), { allowHostClose: true });
   return true;
 }
 
@@ -597,8 +597,9 @@ function studioHtml() {
 function isMobileStudioEnvironment() {
   let contextMobile = false;
   try {
-    const value = ctx()?.isMobile;
-    contextMobile = typeof value === 'function' ? Boolean(value.call(ctx())) : Boolean(value);
+    const context = ctx();
+    const value = context?.isMobile;
+    contextMobile = typeof value === 'function' ? Boolean(value.call(context)) : Boolean(value);
   } catch {}
   const screenWidth = Math.min(
     Number(window.screen?.width) || Number.POSITIVE_INFINITY,
@@ -607,86 +608,73 @@ function isMobileStudioEnvironment() {
   return contextMobile
     || window.innerWidth <= 760
     || screenWidth <= 760
-    || window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+    || Boolean(window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches);
 }
 
-function suspendAstraExtensionsDrawer() {
-  const drawer = document.getElementById('astra-send-form-extensions-drawer');
-  if (!drawer || drawer.dataset.state === 'closed') return;
-
-  try {
-    if (drawer.contains(document.activeElement)) document.activeElement?.blur?.();
-    document.dispatchEvent(new KeyboardEvent('keydown', {
-      key: 'Escape',
-      code: 'Escape',
-      bubbles: true,
-      cancelable: true,
-    }));
-  } catch {}
-
-  const layers = [
-    drawer,
-    ...document.querySelectorAll('.astra-drawer__overlay[data-state="open"], [data-vaul-overlay][data-state="open"]'),
-  ];
-  astraSuspendedLayers = [...new Set(layers)].map(node => ({
-    node,
-    ariaHidden: node.getAttribute('aria-hidden'),
-    inert: Boolean(node.inert),
-  }));
-  for (const record of astraSuspendedLayers) {
-    record.node.dataset.ngStudioSuspended = 'true';
-    record.node.setAttribute('aria-hidden', 'true');
-    record.node.inert = true;
+function recoverStaleStudioState() {
+  if (!document.getElementById('ng-studio-overlay')) {
+    document.body?.classList.remove('ng-studio-open');
   }
-}
-
-function restoreAstraExtensionsDrawer() {
-  for (const record of astraSuspendedLayers) {
-    const node = record.node;
-    if (!node?.isConnected) continue;
+  document.querySelectorAll('[data-ng-studio-suspended="true"]').forEach(node => {
     delete node.dataset.ngStudioSuspended;
-    if (record.ariaHidden == null) node.removeAttribute('aria-hidden');
-    else node.setAttribute('aria-hidden', record.ariaHidden);
-    node.inert = record.inert;
-  }
-  astraSuspendedLayers = [];
+    node.inert = false;
+    if (node.getAttribute('aria-hidden') === 'true') node.removeAttribute('aria-hidden');
+  });
+}
+
+function scheduleStudioOpen(mode = 'free', focus = 'prompt') {
+  if (studioLaunchTimer) clearTimeout(studioLaunchTimer);
+  const astraDrawer = document.getElementById('astra-send-form-extensions-drawer');
+  const delay = astraDrawer?.dataset.state === 'open' ? 120 : 0;
+  studioLaunchTimer = setTimeout(() => {
+    studioLaunchTimer = null;
+    openStudio(mode, focus);
+  }, delay);
 }
 
 function openStudio(mode = 'free', focus = 'prompt') {
   closeStudio();
-  suspendAstraExtensionsDrawer();
-  studio = newStudio(mode, focus);
-  const overlay = document.createElement('div');
-  overlay.id = 'ng-studio-overlay';
-  overlay.className = 'ng-studio-overlay';
-  overlay.dataset.ngMobileLayout = isMobileStudioEnvironment() ? 'true' : 'false';
-  overlay.dataset.ngMobilePane = 'controls';
-  overlay.setAttribute('data-vaul-no-drag', '');
-  overlay.setAttribute('data-astra-extension-surface', 'novel-generation');
-  overlay.innerHTML = studioHtml();
-  document.documentElement.appendChild(overlay);
-  document.body?.classList.add('ng-studio-open');
-  bindStudio();
-  if (focus === 'gallery') switchTab('gallery');
-  else {
-    const target = overlay.querySelector(`[data-focus="${focus}"]`);
-    if (target) {
-      target.open = true;
-      setTimeout(() => target.scrollIntoView({ block: 'nearest' }), 30);
+  let overlay = null;
+  try {
+    studio = newStudio(mode, focus);
+    overlay = document.createElement('div');
+    overlay.id = 'ng-studio-overlay';
+    overlay.className = 'ng-studio-overlay';
+    overlay.dataset.ngMobileLayout = isMobileStudioEnvironment() ? 'true' : 'false';
+    overlay.dataset.ngMobilePane = 'controls';
+    overlay.setAttribute('data-vaul-no-drag', '');
+    overlay.setAttribute('data-astra-extension-surface', 'novel-generation');
+    overlay.innerHTML = studioHtml();
+    document.documentElement.appendChild(overlay);
+    document.body?.classList.add('ng-studio-open');
+    bindStudio();
+    if (focus === 'gallery') switchTab('gallery');
+    else {
+      const target = overlay.querySelector(`[data-focus="${focus}"]`);
+      if (target) {
+        target.open = true;
+        setTimeout(() => target.isConnected && target.scrollIntoView({ block: 'nearest' }), 30);
+      }
     }
+    escapeHandler = event => { if (event.key === 'Escape') closeStudio(); };
+    document.addEventListener('keydown', escapeHandler);
+  } catch (error) {
+    overlay?.remove();
+    document.body?.classList.remove('ng-studio-open');
+    if (escapeHandler) document.removeEventListener('keydown', escapeHandler);
+    escapeHandler = null;
+    studio = null;
+    console.error('[Novel Generation] Studio failed to open:', error);
+    toast('error', 'Studio failed to open safely. Check the browser console for details.');
   }
-  escapeHandler = event => { if (event.key === 'Escape') closeStudio(); };
-  document.addEventListener('keydown', escapeHandler);
 }
 
 function closeStudio() {
   document.getElementById('ng-studio-overlay')?.remove();
   document.body?.classList.remove('ng-studio-open');
-  restoreAstraExtensionsDrawer();
   if (escapeHandler) document.removeEventListener('keydown', escapeHandler);
   escapeHandler = null;
 }
-
 function bindStudio() {
   document.getElementById('ng-close')?.addEventListener('click', closeStudio);
   document.querySelector('#ng-studio-overlay [data-mobile-pane="preview"]')?.addEventListener('click', () => {
@@ -701,7 +689,7 @@ function bindStudio() {
     if (typeof ngV055SetMobilePane === 'function') ngV055SetMobilePane('controls');
   });
   document.getElementById('ng-studio-overlay')?.addEventListener('pointerdown', event => event.stopPropagation());
-  document.querySelectorAll('#ng-studio-overlay [data-tab]').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
+  document.querySelectorAll('#ng-studio-overlay .ng-studio-tabs [data-tab]').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
   document.getElementById('ng-prompt')?.addEventListener('input', event => { studio.prompt = event.currentTarget.value; });
   document.getElementById('ng-negative')?.addEventListener('input', event => { studio.negative = event.currentTarget.value; });
   document.getElementById('ng-edit-mode')?.addEventListener('change', event => {
@@ -4200,6 +4188,8 @@ openStudio = function (mode, focus) {
 };
 
 ngV055SetVersionLabels();
+recoverStaleStudioState();
+setTimeout(recoverStaleStudioState, 0);
 
 
 /* ===== Consolidated runtime section 16: runtime/parts/v056-16.js ===== */
