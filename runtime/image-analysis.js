@@ -11,7 +11,6 @@
   const DEFAULTS = Object.freeze({ preset: 'tags', language: 'auto' });
   const state = { image: null, result: '', busy: false };
   let fallbackSettings = { imageAnalysis: { ...DEFAULTS } };
-  let mountQueued = false;
 
   const byId = id => document.getElementById(id);
   const context = () => globalThis.SillyTavern?.getContext?.() || null;
@@ -377,15 +376,6 @@
     return true;
   }
 
-  function queueMount() {
-    if (mountQueued) return;
-    mountQueued = true;
-    queueMicrotask(() => {
-      mountQueued = false;
-      mountInlineHelper();
-    });
-  }
-
   function focusInlineHelper() {
     removeLegacyUi();
     try {
@@ -408,8 +398,16 @@
 
   removeLegacyUi();
   mountInlineHelper();
+
+  // The previous document-wide MutationObserver called render() in response to
+  // render()'s own DOM mutations, creating an endless microtask loop that froze
+  // the Studio as soon as the inline helper appeared. Mount only from the
+  // explicit Studio-ready lifecycle event instead.
   globalThis.__novelGenerationImageAnalyzerMountObserver?.disconnect?.();
-  const observer = new MutationObserver(queueMount);
-  observer.observe(document.documentElement, { childList: true, subtree: true });
-  globalThis.__novelGenerationImageAnalyzerMountObserver = observer;
+  globalThis.__novelGenerationImageAnalyzerMountObserver = null;
+  const previousReadyHandler = globalThis.__novelGenerationImageAnalyzerReadyHandler;
+  if (previousReadyHandler) document.removeEventListener('novel-generation:studio-ready', previousReadyHandler);
+  const readyHandler = () => mountInlineHelper();
+  document.addEventListener('novel-generation:studio-ready', readyHandler);
+  globalThis.__novelGenerationImageAnalyzerReadyHandler = readyHandler;
 })();

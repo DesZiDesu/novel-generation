@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.5';
+const VERSION = '0.6.6';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -1574,7 +1574,7 @@ function bindGeneratedActions(root, images) {
 
 /* ===== Consolidated runtime section 08: runtime/parts/v031-09.js ===== */
 // Novel Generation v0.3.1: provider capability discovery and connection UI.
-const NG_V031_RELEASE = '0.3.1';
+const NG_V031_RELEASE = VERSION;
 const ngProviderCaps = {
   checked: false,
   wrapper: 'unknown',
@@ -2300,7 +2300,7 @@ else init();
 
 /* ===== Consolidated runtime section 11: runtime/parts/v040-11.js ===== */
 // Novel Generation v0.4.0: Prompt Assistant, chat-context generation, Danbooru artist browser.
-const NG_V040_RELEASE = '0.4.0';
+const NG_V040_RELEASE = VERSION;
 const NG_V040_DANBOORU = 'https://danbooru.donmai.us';
 const ngV040ArtistCache = new Map();
 let ngV040ArtistDebounce = null;
@@ -2994,7 +2994,7 @@ const ngV040InstallTimer = setInterval(() => {
 // This layer intentionally keeps the v0.4 drawer, wand menu, Studio, Vibe/Precise,
 // touch mask painter, gallery/export, and Prompt Assistant designs intact.
 
-var NG_V051_RELEASE = '0.5.1';
+var NG_V051_RELEASE = VERSION;
 var NG_V051_SIZE_PRESETS = [
   ['portrait-small', 'Small Portrait · 512 × 768', 512, 768],
   ['portrait-3x4', 'Portrait 3:4 · 768 × 1024', 768, 1024],
@@ -3244,7 +3244,7 @@ var ngV051Timer = setInterval(function () {
 // custom-size scaler/ratio tools, and responsive Studio refinements.
 // Loaded after v0.5.1 so the restored classic UI and all previous features remain intact.
 
-var NG_V052_RELEASE = '0.5.2';
+var NG_V052_RELEASE = VERSION;
 
 function ngV052IsIOS() {
   return /iPad|iPhone|iPod/i.test(navigator.userAgent || '')
@@ -3713,7 +3713,7 @@ var ngV052Timer = setInterval(function () {
 // Novel Generation v0.5.4 — weighted NovelAI prompt visualization.
 // Loaded after v0.5.2 so all previous generation, gallery, size and mobile features remain intact.
 
-var NG_V053_RELEASE = '0.5.4';
+var NG_V053_RELEASE = VERSION;
 
 function ngV053EscapeHtml(value) {
   return String(value ?? '')
@@ -3888,7 +3888,7 @@ ngV053RefreshWeightedEditors();
 
 /* ===== Consolidated runtime section 15: runtime/parts/v055-15.js ===== */
 // Novel Generation v0.5.5 — mobile workspace + AI Prompt Helper.
-var NG_V055_RELEASE = '0.5.5';
+var NG_V055_RELEASE = VERSION;
 
 function ngV055IsMobile() {
   return isMobileStudioEnvironment();
@@ -4203,6 +4203,7 @@ function ngV055InitStudio() {
   ngV055InjectMobileNav();
   ngV055InjectAiHelper();
   ngV055BindMobileAccordions();
+  document.dispatchEvent(new CustomEvent('novel-generation:studio-ready'));
   if (ngV055IsMobile()) {
     var hasImage = Boolean(document.querySelector('#ng-preview img'));
     ngV055SetMobilePane(hasImage && ngV055ActiveTab() === 'generate' ? 'preview' : 'controls');
