@@ -49,3 +49,10 @@ Each click on **Analyze image** makes one vision chat-completion request.
 - **Clean old artist tags** removes artist tags embedded by older extension releases, while **Lock comparison seed** makes A/B style balancing more repeatable.
 
 Equal emphasis values do not guarantee an equal-looking style blend. Artist tags can have different learned strength, so keep the comparison seed fixed and lower the dominant artist or raise the weaker one gradually.
+
+## Original image saving and gallery memory
+
+- **Save Original** fetches the provider image as a Blob and saves those original bytes without drawing through a canvas, resizing, or recompressing the image.
+- The save confirmation reports the decoded pixel dimensions, format, and file size. On iPhone/iPad the native share sheet is used when file sharing is available.
+- The session gallery defaults to 16 full-resolution images and can be configured from 1–40 under **Gallery & Export**. Older images are released automatically when the limit is exceeded.
+- Gallery images can be removed individually or cleared with **Clear All**. Clearing releases the gallery's large data references but does not delete files already saved or images inserted into chat.

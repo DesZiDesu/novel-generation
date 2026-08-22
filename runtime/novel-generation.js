@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.7';
+const VERSION = '0.6.8';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -46,6 +46,7 @@ const DEFAULTS = {
     lastMessage: true,
     gallery: true,
     autoInsert: true,
+    galleryLimit: 16,
   },
 };
 
@@ -177,7 +178,7 @@ function settingsHtml() {
       <button class="menu_button ng-feature-open" data-feature="upscale" type="button"><i class="fa-solid fa-up-right-and-down-left-from-center"></i><span><strong>Upscale / Enhance</strong><small>2× / 4K provider attempt with img2img fallback</small></span></button>
     </div>`;
 
-  const galleryHtml = `<div class="ng-actions"><button id="ng-gallery-open" class="menu_button" type="button"><i class="fa-solid fa-images"></i> Open gallery</button><button id="ng-gallery-export" class="menu_button" type="button"><i class="fa-solid fa-file-export"></i> Export metadata</button></div>`;
+  const galleryHtml = `${field('Session gallery limit', `<input id="ng-gallery-limit" class="text_pole" type="number" inputmode="numeric" min="1" max="40" value="${Math.max(1, Math.min(40, Number(s.roleplay.galleryLimit) || 16))}">`, 'Full-resolution images use browser memory. A lower limit is safer on iPhone and iPad.')}<div class="ng-actions"><button id="ng-gallery-open" class="menu_button" type="button"><i class="fa-solid fa-images"></i> Open gallery</button><button id="ng-gallery-export" class="menu_button" type="button"><i class="fa-solid fa-file-export"></i> Export metadata</button><button id="ng-gallery-clear-drawer" class="menu_button" type="button"><i class="fa-solid fa-trash"></i> Clear gallery</button></div>`;
   const advanced = `<p class="ng-muted">Auto mode first sends NovelAI-native Vibe and Director Reference fields, then retries alternate proxy schemas only when the provider rejects a request. It does not silently fall back to a reference-free generation when Vibe or Precise is active.</p><button id="ng-debug-open" class="menu_button" type="button"><i class="fa-solid fa-bug"></i> Open request debug</button>`;
 
   return `<div id="ng-settings" class="ng-settings-root"><div class="inline-drawer">
@@ -315,6 +316,14 @@ function bindSettings() {
   document.querySelectorAll('#ng-settings .ng-feature-open').forEach(btn => btn.addEventListener('click', () => openStudio('free', btn.dataset.feature)));
   document.getElementById('ng-gallery-open')?.addEventListener('click', () => openStudio('free', 'gallery'));
   document.getElementById('ng-gallery-export')?.addEventListener('click', exportGallery);
+  document.getElementById('ng-gallery-clear-drawer')?.addEventListener('click', () => ngV068ClearGallery(true));
+  document.getElementById('ng-gallery-limit')?.addEventListener('change', event => {
+    const limit = Math.max(1, Math.min(40, Math.round(Number(event.currentTarget.value) || 16)));
+    s.roleplay.galleryLimit = limit;
+    event.currentTarget.value = limit;
+    ngV068TrimGallery(limit);
+    save();
+  });
   document.getElementById('ng-debug-open')?.addEventListener('click', () => openStudio('free', 'debug'));
   const sampler = document.getElementById('ng-sampler');
   const scheduler = document.getElementById('ng-scheduler');
@@ -1432,9 +1441,8 @@ function rememberImages(images, state, extra = {}) {
     createdAt: new Date().toISOString(),
     ...extra,
   }));
-  gallery.splice(40);
-  const count = document.getElementById('ng-gallery-count');
-  if (count) count.textContent = gallery.length;
+  ngV068TrimGallery(settings().roleplay.galleryLimit);
+  ngV068UpdateGalleryCount();
 }
 
 async function generateStudio() {
@@ -4896,3 +4904,243 @@ document.addEventListener('novel-generation:studio-ready', function () {
 
 ngV067ArtistPrefs();
 ngV067EnhanceDrawer();
+
+
+/* ===== Consolidated runtime section 18: Original saves + gallery cleanup ===== */
+// Novel Generation v0.6.8 — preserve provider bytes on save and let users
+// release full-resolution session images without restarting SillyTavern.
+var NG_V068_RELEASE = VERSION;
+
+function ngV068UpdateGalleryCount() {
+  document.querySelectorAll('#ng-gallery-count').forEach(function (count) {
+    count.textContent = gallery.length;
+  });
+  var stats = document.getElementById('ng-v068-gallery-stats');
+  if (stats) {
+    var dataBytes = gallery.reduce(function (total, item) {
+      var source = String(item?.src || '');
+      if (!source.startsWith('data:')) return total;
+      var comma = source.indexOf(',');
+      if (comma < 0) return total;
+      var body = source.slice(comma + 1);
+      return total + (source.slice(0, comma).includes(';base64') ? Math.floor(body.length * 0.75) : body.length);
+    }, 0);
+    var memory = dataBytes ? ' · approximately ' + ngV068FormatBytes(dataBytes) + ' encoded image data' : '';
+    stats.textContent = gallery.length + ' / ' + ngV068GalleryLimit() + ' images' + memory;
+  }
+}
+
+function ngV068FormatBytes(bytes) {
+  var value = Math.max(0, Number(bytes) || 0);
+  if (value < 1024) return value + ' B';
+  if (value < 1024 * 1024) return (value / 1024).toFixed(1) + ' KB';
+  return (value / (1024 * 1024)).toFixed(1) + ' MB';
+}
+
+function ngV068GalleryLimit(value) {
+  var raw = value ?? settings().roleplay.galleryLimit;
+  return Math.max(1, Math.min(40, Math.round(Number(raw) || 16)));
+}
+
+function ngV068ReleaseGalleryItems(items) {
+  for (var item of items || []) {
+    // Gallery records are the only owners of these large data strings. Clear
+    // every reference so the browser can reclaim them after the DOM rerenders.
+    if (!item || typeof item !== 'object') continue;
+    item.src = '';
+    item.prompt = '';
+    item.negative = '';
+  }
+}
+
+function ngV068TrimGallery(limit) {
+  var maximum = ngV068GalleryLimit(limit);
+  settings().roleplay.galleryLimit = maximum;
+  if (gallery.length > maximum) {
+    ngV068ReleaseGalleryItems(gallery.splice(maximum));
+    if (document.getElementById('ng-gallery-grid')) renderGallery();
+  }
+  ngV068UpdateGalleryCount();
+}
+
+function ngV068DeleteGalleryItem(index) {
+  var position = Number(index);
+  if (!Number.isInteger(position) || position < 0 || position >= gallery.length) return;
+  ngV068ReleaseGalleryItems(gallery.splice(position, 1));
+  renderGallery();
+  ngV068UpdateGalleryCount();
+  toast('success', 'Image removed from the session gallery and its memory reference was released.');
+}
+
+function ngV068ClearGallery(ask) {
+  if (!gallery.length) {
+    renderGallery();
+    ngV068UpdateGalleryCount();
+    return false;
+  }
+  if (ask && !window.confirm('Clear all full-resolution images from the Novel Generation session gallery? Saved files and chat images will not be deleted.')) return false;
+  ngV068ReleaseGalleryItems(gallery.splice(0));
+  renderGallery();
+  ngV068UpdateGalleryCount();
+  toast('success', 'Session gallery cleared. Saved files and images already inserted into chat were kept.');
+  return true;
+}
+
+function ngV068SniffImageType(bytes, fallback) {
+  if (bytes[0] === 0x89 && bytes[1] === 0x50 && bytes[2] === 0x4e && bytes[3] === 0x47) return 'image/png';
+  if (bytes[0] === 0xff && bytes[1] === 0xd8 && bytes[2] === 0xff) return 'image/jpeg';
+  if (bytes[0] === 0x52 && bytes[1] === 0x49 && bytes[2] === 0x46 && bytes[3] === 0x46
+    && bytes[8] === 0x57 && bytes[9] === 0x45 && bytes[10] === 0x42 && bytes[11] === 0x50) return 'image/webp';
+  return /^image\//i.test(String(fallback || '')) ? fallback : 'image/png';
+}
+
+async function ngV068OriginalBlob(src) {
+  var blob = await ngV052BlobFromImage(src);
+  var header = new Uint8Array(await blob.slice(0, 16).arrayBuffer());
+  var type = ngV068SniffImageType(header, blob.type);
+  // Wrapping only corrects MIME metadata. It does not decode, resize, compress,
+  // or re-encode the provider's original bytes.
+  return blob.type === type ? blob : new Blob([blob], { type: type });
+}
+
+function ngV068ImageDimensions(blob) {
+  if (typeof createImageBitmap === 'function') {
+    return createImageBitmap(blob).then(function (bitmap) {
+      var dimensions = { width: bitmap.width, height: bitmap.height };
+      bitmap.close?.();
+      return dimensions;
+    }).catch(function () { return ngV068ImageDimensionsFallback(blob); });
+  }
+  return ngV068ImageDimensionsFallback(blob);
+}
+
+function ngV068ImageDimensionsFallback(blob) {
+  return new Promise(function (resolve) {
+    var url = URL.createObjectURL(blob);
+    var image = new Image();
+    image.onload = function () {
+      var dimensions = { width: image.naturalWidth || 0, height: image.naturalHeight || 0 };
+      URL.revokeObjectURL(url);
+      resolve(dimensions);
+    };
+    image.onerror = function () {
+      URL.revokeObjectURL(url);
+      resolve({ width: 0, height: 0 });
+    };
+    image.src = url;
+  });
+}
+
+function ngV068OriginalSaveMessage(blob, dimensions) {
+  var size = dimensions?.width && dimensions?.height ? dimensions.width + ' × ' + dimensions.height + ' · ' : '';
+  var format = ngV052Extension(blob.type).toUpperCase();
+  return 'Original ' + size + format + ' saved without resizing or re-encoding (' + ngV068FormatBytes(blob.size) + ').';
+}
+
+ngV052SaveImage = async function (src, filename) {
+  var blob;
+  try {
+    blob = await ngV068OriginalBlob(src);
+  } catch (error) {
+    toast('warning', 'The browser could not read the original file directly. Open the full image and press/hold it to save the provider image.');
+    return false;
+  }
+
+  var dimensions = await ngV068ImageDimensions(blob);
+  var ext = ngV052Extension(blob.type);
+  var safeName = String(filename || ('novel-generation-' + Date.now() + '.' + ext))
+    .replace(/\.(png|jpe?g|webp)$/i, '') + '.' + ext;
+  var file = new File([blob], safeName, { type: blob.type || 'image/png' });
+
+  if (ngV052IsIOS() && navigator.share && navigator.canShare) {
+    try {
+      if (navigator.canShare({ files: [file] })) {
+        await navigator.share({ files: [file], title: 'Original Novel Generation image' });
+        toast('success', ngV068OriginalSaveMessage(blob, dimensions));
+        return true;
+      }
+    } catch (error) {
+      if (error?.name === 'AbortError') return false;
+      console.debug('[Novel Generation] iOS original-file share fallback', error);
+    }
+  }
+
+  try {
+    var url = URL.createObjectURL(blob);
+    var anchor = document.createElement('a');
+    anchor.href = url;
+    anchor.download = safeName;
+    anchor.rel = 'noopener';
+    anchor.style.display = 'none';
+    document.body.appendChild(anchor);
+    anchor.click();
+    setTimeout(function () {
+      anchor.remove();
+      URL.revokeObjectURL(url);
+    }, 1500);
+    toast('success', ngV068OriginalSaveMessage(blob, dimensions));
+    return true;
+  } catch (error) {
+    toast('warning', 'The browser blocked the original-file download. Press/hold the full image to save it.');
+    return false;
+  }
+};
+
+var ngV068BaseGeneratedActions = generatedActions;
+generatedActions = function () {
+  return ngV068BaseGeneratedActions.apply(this, arguments)
+    .replace(/(<i class="fa-solid fa-download"><\/i>) Save(?=<\/button>)/, '$1 Save Original');
+};
+
+var ngV068BaseOpenViewer = ngV052OpenViewer;
+ngV052OpenViewer = function (src, meta) {
+  var result = ngV068BaseOpenViewer.apply(this, arguments);
+  var note = document.querySelector('#ng-image-viewer footer small');
+  if (note) note.textContent = 'Save Original keeps the provider file at its real pixel size without canvas resizing or recompression. On iPhone/iPad it uses the native share sheet when available.';
+  var button = document.querySelector('#ng-image-viewer .ng-image-viewer-save');
+  if (button) button.innerHTML = '<i class="fa-solid fa-download"></i> Save Original';
+  return result;
+};
+
+function ngV068EnsureGalleryToolbar(grid) {
+  var panel = grid?.parentElement;
+  if (!panel) return;
+  var toolbar = document.getElementById('ng-v068-gallery-toolbar');
+  if (!toolbar) {
+    toolbar = document.createElement('div');
+    toolbar.id = 'ng-v068-gallery-toolbar';
+    toolbar.className = 'ng-v068-gallery-toolbar';
+    toolbar.innerHTML = '<div><strong>Session Gallery</strong><small id="ng-v068-gallery-stats"></small></div>'
+      + '<button id="ng-v068-gallery-clear" class="menu_button" type="button"><i class="fa-solid fa-trash"></i> Clear All</button>';
+    panel.insertBefore(toolbar, grid);
+    document.getElementById('ng-v068-gallery-clear')?.addEventListener('click', function () { ngV068ClearGallery(true); });
+  }
+  ngV068UpdateGalleryCount();
+}
+
+renderGallery = function () {
+  var grid = document.getElementById('ng-gallery-grid');
+  if (!grid) return;
+  ngV068EnsureGalleryToolbar(grid);
+  if (!gallery.length) {
+    grid.innerHTML = '<div class="ng-preview-empty"><i class="fa-regular fa-images"></i><strong>No images yet</strong><span>Successful generations appear here. Clearing the gallery does not delete saved files or chat images.</span></div>';
+    ngV068UpdateGalleryCount();
+    return;
+  }
+  var images = gallery.map(function (item) { return item.src; });
+  grid.innerHTML = gallery.map(function (item, index) {
+    return '<article class="ng-gallery-item">'
+      + '<button class="ng-image-tap-target ng-gallery-image-button" data-src-index="' + index + '" type="button" aria-label="View full image">'
+      + '<img class="ng-viewable-image" src="' + attr(item.src) + '" alt="Gallery image"></button>'
+      + '<div class="ng-v068-gallery-meta"><span><strong>' + esc(item.model) + '</strong><small>' + item.width + ' × ' + item.height + '</small></span>'
+      + '<button class="menu_button ng-v068-gallery-delete" data-gallery-index="' + index + '" type="button" aria-label="Remove image from gallery"><i class="fa-solid fa-trash"></i></button></div>'
+      + generatedActions(item.src, index) + '</article>';
+  }).join('');
+  bindGeneratedActions(grid, images, gallery);
+  grid.querySelectorAll('.ng-v068-gallery-delete').forEach(function (button) {
+    button.addEventListener('click', function () { ngV068DeleteGalleryItem(button.dataset.galleryIndex); });
+  });
+  ngV068UpdateGalleryCount();
+};
+
+ngV068TrimGallery();

@@ -1,5 +1,5 @@
 // Novel Generation consolidated runtime loader.
-const NG_RUNTIME_VERSION = '0.6.7';
+const NG_RUNTIME_VERSION = '0.6.8';
 const NG_RUNTIME_FILES = [
   'runtime/novel-generation.js',
   'runtime/image-analysis.js',
