@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.9';
+const VERSION = '0.7.0';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -5194,3 +5194,240 @@ renderGallery = function () {
 };
 
 ngV068TrimGallery();
+
+
+/* ===== Consolidated runtime section 19: AI Prompt Helper output modes ===== */
+// Novel Generation v0.7.0 — text ideas can become pure tags, a natural-language
+// prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
+var NG_V070_RELEASE = VERSION;
+
+function ngV070AiPrefs() {
+  var prefs = ngV055Prefs();
+  if (!['tags', 'native', 'hybrid'].includes(prefs.aiHelperMode)) prefs.aiHelperMode = 'tags';
+  if (!prefs.aiHelperLanguage) prefs.aiHelperLanguage = 'auto';
+  return prefs;
+}
+
+function ngV070LanguageLabel(value) {
+  return ({
+    auto: 'the same language as the user request; use English when uncertain',
+    English: 'English', Thai: 'Thai', Japanese: 'Japanese', Chinese: 'Simplified Chinese',
+    Korean: 'Korean', Spanish: 'Spanish', French: 'French', German: 'German',
+    Portuguese: 'Portuguese', Vietnamese: 'Vietnamese',
+  })[value] || 'English';
+}
+
+function ngV070TargetModel() {
+  var model = String(settings().model || 'NovelAI').trim();
+  return { name: model, v5: /(?:diffusion|nai)[-_. ]?5|\bv5\b/i.test(model) };
+}
+
+function ngV070AiInstruction(userText, mode, languageValue) {
+  var target = ngV070TargetModel();
+  var language = ngV070LanguageLabel(languageValue);
+  var common = [
+    'Create an image-generation prompt for ' + target.name + '.',
+    'Preserve the requested subjects, identities, franchise names, appearance, clothing, actions, expressions, objects, environment, lighting, camera framing, composition, visual style, and any explicit numerical weights.',
+    'Resolve contradictions into one coherent composition instead of repeating incompatible framing or poses.',
+    'Do not invent artist names. Do not add commentary, markdown, code fences, or safety notes.',
+    'Never emit <think>, <thinking>, <thoughts>, <planning>, <analysis>, or <reasoning> markup. Return only the requested final prompt.',
+  ];
+  if (target.v5) common.push('Use NovelAI Diffusion V5 strengths: precise spatial relationships, character interaction, detailed environments, materials, effects, and text placement when the request needs them.');
+
+  if (mode === 'native') {
+    return [
+      ...common,
+      'Write one polished natural-language prompt in ' + language + '.',
+      'Use one coherent paragraph with complete descriptive sentences. Do not return a comma-separated Danbooru tag list and do not add a heading.',
+      '', 'USER IMAGE IDEA:', String(userText || '').trim(),
+    ].join('\n');
+  }
+  if (mode === 'hybrid') {
+    return [
+      ...common,
+      'Return exactly two parts and use these literal headings:',
+      'TAGS: one comma-separated line of concise English NovelAI/Danbooru-style tags',
+      'DESCRIPTION: one polished natural-language paragraph in ' + language,
+      'The tag line should lock identity and visible attributes; the paragraph should explain spatial relationships, interaction, atmosphere, materials, effects, and composition without needlessly repeating every tag.',
+      '', 'USER IMAGE IDEA:', String(userText || '').trim(),
+    ].join('\n');
+  }
+  return [
+    ...common,
+    'Return only one comma-separated line of concise English NovelAI/Danbooru-style visual tags. No sentences or heading.',
+    'Order tags roughly as subject/count, identity and appearance, clothing, action/pose/expression, objects, location, lighting, camera/composition, and style/details.',
+    '', 'USER IMAGE IDEA:', String(userText || '').trim(),
+  ].join('\n');
+}
+
+function ngV070CleanVisible(raw, preferTags) {
+  return ngV055ExtractAiFinal(raw, Boolean(preferTags))
+    .replace(/^\s*```(?:\w+)?\s*/i, '')
+    .replace(/\s*```\s*$/i, '')
+    .trim();
+}
+
+function ngV070BuildTagLine(raw) {
+  var prefs = ngV070AiPrefs();
+  var prompt = ngV055NormalizeAiTags(raw).join(', ');
+  if (prefs.aiHelperSuggestions) prompt = ngV040AppendTags(prompt, ngV040SuggestTags(prompt));
+  if (prefs.aiHelperQuality) prompt = ngV040AppendTags(prompt, ngV040ModelQualityTags());
+  return prompt.trim();
+}
+
+function ngV070BuildAiPrompt(raw, mode) {
+  var visible = ngV070CleanVisible(raw, mode === 'tags');
+  if (!visible) return '';
+  if (mode === 'tags') return ngV070BuildTagLine(visible);
+  if (mode === 'native') {
+    return visible.replace(/^\s*(?:description|prompt|natural(?:-language)? prompt)\s*:\s*/i, '').trim();
+  }
+
+  var tags = '';
+  var description = '';
+  var marked = visible.match(/(?:^|\n)\s*TAGS?\s*:\s*([\s\S]*?)(?:\n\s*(?:DESCRIPTION|NATURAL(?:-LANGUAGE)? PROMPT)\s*:\s*)([\s\S]*)$/i);
+  if (!marked) {
+    // ngV055ExtractAiFinal intentionally strips a leading "TAGS:" final marker,
+    // so also recognize the remaining tag line followed by DESCRIPTION.
+    marked = visible.match(/^([\s\S]*?)(?:\n\s*(?:DESCRIPTION|NATURAL(?:-LANGUAGE)? PROMPT)\s*:\s*)([\s\S]*)$/i);
+  }
+  if (marked) {
+    tags = marked[1].trim();
+    description = marked[2].trim();
+  } else {
+    var blocks = visible.split(/\n\s*\n+/).map(function (part) { return part.trim(); }).filter(Boolean);
+    var tagIndex = blocks.findIndex(function (part) { return (part.match(/,/g) || []).length >= 2; });
+    if (tagIndex >= 0) {
+      tags = blocks.splice(tagIndex, 1)[0];
+      description = blocks.join(' ');
+    } else {
+      var lines = visible.split(/\n+/).map(function (part) { return part.trim(); }).filter(Boolean);
+      tags = lines.shift() || '';
+      description = lines.join(' ');
+    }
+  }
+  tags = tags.replace(/^\s*TAGS?\s*:\s*/i, '');
+  description = description.replace(/^\s*(?:DESCRIPTION|NATURAL(?:-LANGUAGE)? PROMPT)\s*:\s*/i, '').trim();
+  var tagLine = ngV070BuildTagLine(tags);
+  return [tagLine, description].filter(Boolean).join('\n\n');
+}
+
+function ngV070ModeCopy(mode) {
+  if (mode === 'native') return { button: 'Create Natural Prompt', ready: 'Natural-language prompt ready.', placeholder: 'A detailed natural-language prompt appears here…' };
+  if (mode === 'hybrid') return { button: 'Create Hybrid Prompt', ready: 'Hybrid tags + description prompt ready.', placeholder: 'English tags and a natural-language description appear here…' };
+  return { button: 'Convert to Tags', ready: 'Tags ready.', placeholder: 'AI-generated tags appear here…' };
+}
+
+function ngV070RefreshAiHelperMode() {
+  var mode = document.getElementById('ng-v070-ai-mode')?.value || ngV070AiPrefs().aiHelperMode;
+  var copy = ngV070ModeCopy(mode);
+  var button = document.getElementById('ng-v055-ai-run');
+  var output = document.getElementById('ng-v055-ai-output');
+  var language = document.getElementById('ng-v070-ai-language');
+  if (button && !button.disabled) button.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i> ' + copy.button;
+  if (output) output.placeholder = copy.placeholder;
+  if (language) language.disabled = mode === 'tags';
+}
+
+ngV055RunAiHelper = async function () {
+  var input = document.getElementById('ng-v055-ai-input');
+  var output = document.getElementById('ng-v055-ai-output');
+  var status = document.getElementById('ng-v055-ai-status');
+  var button = document.getElementById('ng-v055-ai-run');
+  var idea = String(input?.value || '').trim();
+  if (!idea) return toast('warning', 'Describe the image you want first.');
+  var prefs = ngV070AiPrefs();
+  var mode = document.getElementById('ng-v070-ai-mode')?.value || prefs.aiHelperMode;
+  var language = document.getElementById('ng-v070-ai-language')?.value || prefs.aiHelperLanguage;
+  var context;
+  try { context = ctx(); } catch {}
+  if (!context || typeof context.generateQuietPrompt !== 'function') return toast('error', 'This SillyTavern build does not expose the current AI connection to extensions.');
+  if (button) button.disabled = true;
+  if (status) status.textContent = 'Using your current SillyTavern AI connection…';
+  try {
+    var reply = await context.generateQuietPrompt({ quietPrompt: ngV070AiInstruction(idea, mode, language) });
+    var finalPrompt = ngV070BuildAiPrompt(reply, mode);
+    if (!finalPrompt) throw new Error('The AI returned no usable prompt.');
+    if (output) {
+      output.value = finalPrompt;
+      output.dataset.ngPromptFormat = mode;
+      output.dispatchEvent(new Event('input', { bubbles: true }));
+      output.dispatchEvent(new Event('change', { bubbles: true }));
+    }
+    if (status) status.textContent = ngV070ModeCopy(mode).ready + ' Review it, then replace or append to Prompt.';
+  } catch (error) {
+    console.error('[Novel Generation] AI Prompt Helper failed:', error);
+    if (status) status.textContent = 'AI helper failed: ' + (error?.message || error);
+    toast('error', 'AI Prompt Helper failed. Check your current SillyTavern AI connection.');
+  } finally {
+    if (button) button.disabled = false;
+    ngV070RefreshAiHelperMode();
+  }
+};
+
+ngV055ApplyPrompt = function (text, append) {
+  if (!studio) return;
+  var next = String(text || '').trim();
+  if (!next) return;
+  var format = document.getElementById('ng-v055-ai-output')?.dataset?.ngPromptFormat || 'tags';
+  if (append && studio.prompt) {
+    studio.prompt = format === 'tags'
+      ? ngV040AppendTags(studio.prompt, ngV055NormalizeAiTags(next))
+      : studio.prompt.trimEnd() + '\n\n' + next;
+  } else {
+    studio.prompt = next;
+  }
+  var textarea = document.getElementById('ng-prompt');
+  if (textarea) {
+    textarea.value = studio.prompt;
+    textarea.dispatchEvent(new Event('input', { bubbles: true }));
+    textarea.focus();
+  }
+};
+
+ngV055AiHelperHtml = function () {
+  var prefs = ngV070AiPrefs();
+  var selected = function (value) { return prefs.aiHelperMode === value ? ' selected' : ''; };
+  var languageSelected = function (value) { return prefs.aiHelperLanguage === value ? ' selected' : ''; };
+  return '<details id="ng-v055-ai-helper" class="ng-studio-section ng-v055-ai-helper" data-focus="ai-helper">'
+    + '<summary><i class="fa-solid fa-wand-magic-sparkles"></i><span>AI Prompt Helper</span><i class="fa-solid fa-chevron-down"></i></summary>'
+    + '<div class="ng-studio-section-body">'
+    + '<p class="ng-muted">Describe the image naturally in Thai, English, or another language, or attach a reference image below. Text ideas can become tags, natural language, or a V5-friendly hybrid.</p>'
+    + '<label class="ng-field"><span class="ng-label">Image idea / requested changes</span><textarea id="ng-v055-ai-input" class="text_pole" rows="4" placeholder="ผู้หญิงใส่เสื้อแจ็คเก็ตยืนตากแดดที่สี่แยกเมืองชินจูกุ"></textarea></label>'
+    + '<div class="ng-v070-ai-format">'
+    + '<label class="ng-field"><span class="ng-label">Text result format</span><select id="ng-v070-ai-mode" class="text_pole"><option value="tags"' + selected('tags') + '>Pure Tags</option><option value="native"' + selected('native') + '>Natural Language</option><option value="hybrid"' + selected('hybrid') + '>Hybrid — Tags + Description</option></select><small class="ng-help">Hybrid uses English tags for attributes and a paragraph for composition and interaction.</small></label>'
+    + '<label class="ng-field"><span class="ng-label">Description language</span><select id="ng-v070-ai-language" class="text_pole"><option value="auto"' + languageSelected('auto') + '>Auto / request language</option><option value="English"' + languageSelected('English') + '>English</option><option value="Thai"' + languageSelected('Thai') + '>ไทย (Thai)</option><option value="Japanese"' + languageSelected('Japanese') + '>日本語 (Japanese)</option><option value="Chinese"' + languageSelected('Chinese') + '>简体中文 (Chinese)</option><option value="Korean"' + languageSelected('Korean') + '>한국어 (Korean)</option><option value="Spanish"' + languageSelected('Spanish') + '>Español</option><option value="French"' + languageSelected('French') + '>Français</option><option value="German"' + languageSelected('German') + '>Deutsch</option><option value="Portuguese"' + languageSelected('Portuguese') + '>Português</option><option value="Vietnamese"' + languageSelected('Vietnamese') + '>Tiếng Việt</option></select><small class="ng-help">Pure Tags always outputs English Danbooru-style tags.</small></label>'
+    + '</div><div class="ng-v055-ai-options">'
+    + '<label class="checkbox_label"><input id="ng-v055-ai-quality" type="checkbox" ' + (prefs.aiHelperQuality ? 'checked' : '') + '><span>Add model-aware Quality Tags to Tags/Hybrid</span></label>'
+    + '<label class="checkbox_label"><input id="ng-v055-ai-artists" type="checkbox" ' + (prefs.aiHelperArtists ? 'checked' : '') + '><span>Add selected Danbooru artist mix</span></label>'
+    + '<label class="checkbox_label"><input id="ng-v055-ai-suggest" type="checkbox" ' + (prefs.aiHelperSuggestions ? 'checked' : '') + '><span>Add local Suggest Tags to Tags/Hybrid</span></label>'
+    + '</div><div class="ng-actions"><button id="ng-v055-ai-run" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> ' + ngV070ModeCopy(prefs.aiHelperMode).button + '</button></div>'
+    + '<small id="ng-v055-ai-status" class="ng-help">Uses the same AI/model currently selected in SillyTavern and consumes one text-generation call.</small>'
+    + '<label class="ng-field"><span class="ng-label">Generated prompt</span><textarea id="ng-v055-ai-output" class="text_pole" rows="7" placeholder="' + ngV070ModeCopy(prefs.aiHelperMode).placeholder + '"></textarea></label>'
+    + '<div class="ng-actions ng-v055-ai-apply"><button id="ng-v055-ai-replace" class="menu_button" type="button">Replace Prompt</button><button id="ng-v055-ai-append" class="menu_button" type="button">Append to Prompt</button></div>'
+    + '</div></details>';
+};
+
+function ngV070BindAiHelperControls() {
+  var root = document.getElementById('ng-v055-ai-helper');
+  if (!root || root.dataset.ngV070Bound) return;
+  root.dataset.ngV070Bound = '1';
+  var prefs = ngV070AiPrefs();
+  document.getElementById('ng-v070-ai-mode')?.addEventListener('change', function (event) {
+    prefs.aiHelperMode = ['tags', 'native', 'hybrid'].includes(event.currentTarget.value) ? event.currentTarget.value : 'tags';
+    save();
+    ngV070RefreshAiHelperMode();
+  });
+  document.getElementById('ng-v070-ai-language')?.addEventListener('change', function (event) {
+    prefs.aiHelperLanguage = event.currentTarget.value || 'auto';
+    save();
+  });
+  ngV070RefreshAiHelperMode();
+}
+
+var ngV070BaseInjectAiHelper = ngV055InjectAiHelper;
+ngV055InjectAiHelper = function () {
+  var result = ngV070BaseInjectAiHelper.apply(this, arguments);
+  ngV070BindAiHelperControls();
+  return result;
+};
