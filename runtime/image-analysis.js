@@ -16,6 +16,7 @@
   };
   const state = { image: null, result: '', busy: false };
   let escapeHandler = null;
+  let lastFocusedElement = null;
   let fallbackSettings = { imageAnalysis: { ...DEFAULTS } };
   const context = () => globalThis.SillyTavern?.getContext?.();
   const byId = id => document.getElementById(id);
@@ -312,11 +313,16 @@
       status.className = 'ng-ia-status' + (kind ? ' is-' + kind : '');
     }
   }
+  function currentResult() {
+    return String(byId('ng-ia-output')?.value ?? state.result ?? '');
+  }
+
   function copyResult() {
-    if (!state.result) return;
+    const result = currentResult();
+    if (!result) return;
     const done = () => toast('success', 'Prompt copied to clipboard.');
     if (navigator.clipboard?.writeText) {
-      navigator.clipboard.writeText(state.result).then(done).catch(() => fallbackCopy(done));
+      navigator.clipboard.writeText(result).then(done).catch(() => fallbackCopy(done));
     } else {
       fallbackCopy(done);
     }
@@ -332,14 +338,30 @@
   }
 
   function downloadResult() {
-    if (!state.result) return;
-    const blob = new Blob([state.result], { type: 'text/plain;charset=utf-8' });
+    const result = currentResult();
+    if (!result) return;
+    const blob = new Blob([result], { type: 'text/plain;charset=utf-8' });
     const url = URL.createObjectURL(blob);
     const link = document.createElement('a');
     link.href = url;
     link.download = 'novel-generation-image-prompt.txt';
     link.click();
     setTimeout(() => URL.revokeObjectURL(url), 500);
+  }
+
+  function applyResultToNovelGen(append = false) {
+    const result = currentResult().trim();
+    if (!result) return;
+    const prompt = byId('ng-prompt');
+    if (!prompt) {
+      toast('warning', 'Open Novel Gen before applying this prompt.');
+      return;
+    }
+    const existing = String(prompt.value || '').trim();
+    prompt.value = append && existing ? existing.replace(/\s*,?\s*$/, '') + ', ' + result : result;
+    prompt.dispatchEvent(new Event('input', { bubbles: true }));
+    prompt.dispatchEvent(new Event('change', { bubbles: true }));
+    toast('success', append ? 'Prompt appended to Novel Gen.' : 'Novel Gen prompt replaced.');
   }
 
   function render() {
@@ -351,6 +373,8 @@
     const analyzeButton = byId('ng-ia-analyze');
     const copy = byId('ng-ia-copy');
     const download = byId('ng-ia-download');
+    const usePrompt = byId('ng-ia-use-prompt');
+    const appendPrompt = byId('ng-ia-append-prompt');
     const output = byId('ng-ia-output');
     if (preview) {
       preview.hidden = !image;
@@ -372,6 +396,8 @@
     }
     if (copy) copy.disabled = !state.result || state.busy;
     if (download) download.disabled = !state.result || state.busy;
+    if (usePrompt) usePrompt.disabled = !state.result || state.busy;
+    if (appendPrompt) appendPrompt.disabled = !state.result || state.busy;
     if (output && output.value !== state.result) output.value = state.result;
     const fileMeta = byId('ng-ia-file-meta');
     if (fileMeta) fileMeta.textContent = image ? image.name + ' · ' + formatBytes(image.size) : 'No image selected';
@@ -394,9 +420,9 @@
       '<label class="ng-ia-field"><span>What should change or be emphasized?</span><textarea id="ng-ia-instruction" class="text_pole" rows="4" placeholder="Example: keep the outfit, change the background to a moonlit forest">' + escapeHtml(a.instruction || '') + '</textarea></label>',
       '<div class="ng-ia-note"><i class="fa-solid fa-circle-info"></i><span>Pure tags returns one comma-separated line. Native-language prompt returns one polished paragraph. The model is asked to describe visible details without guessing hidden information.</span></div>',
       '<button id="ng-ia-analyze" class="menu_button ng-ia-primary" type="button" disabled><i class="fa-solid fa-wand-magic-sparkles"></i> Analyze image</button></section>',
-      '<section class="ng-ia-card ng-ia-result-card"><div class="ng-ia-card-title"><i class="fa-solid fa-file-lines"></i><span><strong>Generated prompt</strong><small>Review it before sending it to your image generator</small></span></div>',
-      '<textarea id="ng-ia-output" class="text_pole ng-ia-output" rows="12" readonly placeholder="Your generated tags or native-language prompt will appear here."></textarea>',
-      '<div class="ng-ia-result-actions"><button id="ng-ia-copy" class="menu_button" type="button" disabled><i class="fa-solid fa-copy"></i> Copy prompt</button><button id="ng-ia-download" class="menu_button" type="button" disabled><i class="fa-solid fa-download"></i> Download .txt</button></div>',
+      '<section class="ng-ia-card ng-ia-result-card"><div class="ng-ia-card-title"><i class="fa-solid fa-file-lines"></i><span><strong>Generated prompt</strong><small>Review and edit the prompt before using it</small></span></div>',
+      '<textarea id="ng-ia-output" class="text_pole ng-ia-output" rows="12" placeholder="Your generated tags or native-language prompt will appear here. You can edit it freely."></textarea>',
+      '<div class="ng-ia-result-actions"><button id="ng-ia-copy" class="menu_button" type="button" disabled><i class="fa-solid fa-copy"></i> Copy prompt</button><button id="ng-ia-download" class="menu_button" type="button" disabled><i class="fa-solid fa-download"></i> Download .txt</button><button id="ng-ia-use-prompt" class="menu_button" type="button" disabled><i class="fa-solid fa-arrow-right-to-bracket"></i> Use in Novel Gen</button><button id="ng-ia-append-prompt" class="menu_button" type="button" disabled><i class="fa-solid fa-plus"></i> Append to Novel Gen</button></div>',
       '<div id="ng-ia-status" class="ng-ia-status">Choose an image to begin.</div></section>',
       '</main></div>',
     ].join('');
@@ -412,6 +438,16 @@
     byId('ng-ia-analyze')?.addEventListener('click', analyze);
     byId('ng-ia-copy')?.addEventListener('click', copyResult);
     byId('ng-ia-download')?.addEventListener('click', downloadResult);
+    byId('ng-ia-use-prompt')?.addEventListener('click', () => applyResultToNovelGen(false));
+    byId('ng-ia-append-prompt')?.addEventListener('click', () => applyResultToNovelGen(true));
+    byId('ng-ia-output')?.addEventListener('input', event => {
+      state.result = event.currentTarget.value;
+      const hasResult = Boolean(state.result.trim());
+      byId('ng-ia-copy').disabled = !hasResult;
+      byId('ng-ia-download').disabled = !hasResult;
+      byId('ng-ia-use-prompt').disabled = !hasResult;
+      byId('ng-ia-append-prompt').disabled = !hasResult;
+    });
     byId('ng-ia-file')?.addEventListener('change', async event => {
       await setImageFile(event.currentTarget.files?.[0]);
       event.currentTarget.value = '';
@@ -451,6 +487,7 @@
 
   function openAnalyzer() {
     if (byId(OVERLAY_ID)) return;
+    lastFocusedElement = document.activeElement instanceof HTMLElement ? document.activeElement : null;
     injectStyles();
     const overlay = document.createElement('div');
     overlay.id = OVERLAY_ID;
@@ -472,55 +509,57 @@
     document.body?.classList.remove('ng-ia-open');
     if (escapeHandler) document.removeEventListener('keydown', escapeHandler);
     escapeHandler = null;
+    if (lastFocusedElement?.isConnected) lastFocusedElement.focus({ preventScroll: true });
+    lastFocusedElement = null;
   }
   function injectStyles() {
     if (byId('ng-image-analyzer-styles')) return;
     const style = document.createElement('style');
     style.id = 'ng-image-analyzer-styles';
     style.textContent = [
-      '#ng-image-analyzer-overlay{position:fixed;inset:0;z-index:100000;display:grid;place-items:center;padding:18px;background:rgba(3,7,14,.78);backdrop-filter:blur(12px);font-family:inherit}',
-      '.ng-ia-dialog{width:min(1050px,100%);max-height:min(900px,100%);overflow:hidden;border:1px solid rgba(157,190,226,.28);border-radius:18px;background:linear-gradient(145deg,#101a29,#0a101b 72%);box-shadow:0 24px 90px rgba(0,0,0,.55);color:#edf5ff;display:flex;flex-direction:column}',
+      'body.ng-ia-open{overflow:hidden!important}',
+      '#ng-image-analyzer-overlay{position:fixed;inset:0;z-index:2147483647;display:grid;place-items:center;padding:18px;overflow:hidden;overscroll-behavior:contain;background:rgba(3,7,14,.78);backdrop-filter:blur(12px);font-family:inherit}',
+      '.ng-ia-dialog{width:min(1050px,100%);max-height:min(900px,100%);min-height:0;overflow:hidden;border:1px solid rgba(157,190,226,.28);border-radius:18px;background:linear-gradient(145deg,#101a29,#0a101b 72%);box-shadow:0 24px 90px rgba(0,0,0,.55);color:#edf5ff;display:flex;flex-direction:column}',
       '.ng-ia-header{display:flex;align-items:center;justify-content:space-between;gap:14px;padding:16px 18px;border-bottom:1px solid rgba(157,190,226,.16);background:rgba(22,34,53,.7)}',
       '.ng-ia-title,.ng-ia-card-title{display:flex;align-items:center;gap:11px}.ng-ia-title>i,.ng-ia-card-title>i{color:#82c7ff;font-size:20px}.ng-ia-title span,.ng-ia-card-title span{display:flex;flex-direction:column;gap:2px}.ng-ia-title strong{font-size:17px}.ng-ia-title small,.ng-ia-card-title small{color:#aab8cb;font-size:11px}.ng-ia-close{min-width:36px!important;width:36px;height:36px;padding:0!important}',
-      '.ng-ia-main{display:grid;grid-template-columns:minmax(300px,.9fr) minmax(320px,1.1fr);gap:12px;padding:14px;overflow:auto}.ng-ia-card{min-width:0;padding:14px;border:1px solid rgba(157,190,226,.16);border-radius:14px;background:rgba(13,23,37,.74);display:flex;flex-direction:column;gap:12px}.ng-ia-source-card{grid-row:span 2}.ng-ia-card-title{padding-bottom:10px;border-bottom:1px solid rgba(157,190,226,.12)}.ng-ia-card-title strong{font-size:13px}',
+      '.ng-ia-main{display:grid;grid-template-columns:minmax(300px,.9fr) minmax(320px,1.1fr);gap:12px;padding:14px;min-height:0;flex:1 1 auto;overflow-x:hidden;overflow-y:auto;overscroll-behavior:contain;-webkit-overflow-scrolling:touch;touch-action:pan-y}.ng-ia-card{min-width:0;padding:14px;border:1px solid rgba(157,190,226,.16);border-radius:14px;background:rgba(13,23,37,.74);display:flex;flex-direction:column;gap:12px}.ng-ia-source-card{grid-row:span 2}.ng-ia-card-title{padding-bottom:10px;border-bottom:1px solid rgba(157,190,226,.12)}.ng-ia-card-title strong{font-size:13px}',
       '.ng-ia-drop{min-height:330px;display:grid;place-items:center;overflow:hidden;border:1px dashed rgba(130,199,255,.44);border-radius:12px;background:radial-gradient(circle at 50% 35%,rgba(66,111,160,.22),transparent 60%),#0a111d;transition:.18s}.ng-ia-drop.is-dragging{border-color:#8bd0ff;background-color:rgba(70,140,210,.2)}.ng-ia-drop.has-image{border-style:solid}.ng-ia-drop img{width:100%;height:100%;max-height:470px;object-fit:contain;display:block}.ng-ia-empty{display:flex;flex-direction:column;align-items:center;gap:7px;padding:30px;text-align:center;color:#aab8cb}.ng-ia-empty i{font-size:38px;color:#6faee0}.ng-ia-empty strong{color:#edf5ff;font-size:14px}.ng-ia-empty span{font-size:11px}',
       '.ng-ia-file-row,.ng-ia-result-actions{display:flex;flex-wrap:wrap;gap:8px}.ng-ia-file-button{position:relative;overflow:hidden}.ng-ia-file-button input{position:absolute;inset:0;width:100%;height:100%;opacity:0;cursor:pointer}.ng-ia-danger{color:#ffb2b2!important}.ng-ia-file-meta{color:#8f9fb3;font-size:11px;min-height:15px}',
-      '.ng-ia-field{display:flex;flex-direction:column;gap:6px}.ng-ia-field>span{font-size:12px;color:#dce9f8}.ng-ia-field small{color:#8f9fb3;font-size:10px;line-height:1.4}.ng-ia-field textarea{resize:vertical;min-height:84px}.ng-ia-note{display:flex;gap:8px;align-items:flex-start;padding:10px;border-radius:9px;background:rgba(81,131,180,.12);color:#aabed4;font-size:11px;line-height:1.45}.ng-ia-note i{color:#82c7ff;margin-top:2px}.ng-ia-primary{justify-content:center;background:linear-gradient(135deg,#327db5,#5f55a9)!important;border-color:rgba(166,221,255,.45)!important;font-weight:700}.ng-ia-output{width:100%;min-height:250px;resize:vertical;line-height:1.55;font-size:12px}.ng-ia-result-actions .menu_button{flex:1}.ng-ia-status{min-height:18px;color:#9eb0c6;font-size:11px;line-height:1.4}.ng-ia-status.is-working{color:#b5dfff}.ng-ia-status.is-ok{color:#8de0ad}.ng-ia-status.is-error{color:#ff9e9e}',
-      '@media(max-width:760px){#ng-image-analyzer-overlay{padding:0}.ng-ia-dialog{width:100%;height:100%;max-height:none;border-radius:0;border-left:0;border-right:0}.ng-ia-main{display:flex;flex-direction:column;padding:10px}.ng-ia-source-card{order:0}.ng-ia-options-card{order:1}.ng-ia-result-card{order:2}.ng-ia-drop{min-height:210px;max-height:39vh}.ng-ia-drop img{max-height:39vh}.ng-ia-header{padding:calc(12px + env(safe-area-inset-top)) 12px 12px}.ng-ia-title small{display:none}.ng-ia-card{padding:11px}.ng-ia-output{min-height:190px}.ng-ia-file-row .menu_button{flex:1;justify-content:center}}',
+      '.ng-ia-dialog input,.ng-ia-dialog textarea,.ng-ia-dialog select,.ng-ia-dialog button,.ng-ia-dialog label{pointer-events:auto}.ng-ia-dialog textarea,.ng-ia-dialog input{-webkit-user-select:text;user-select:text;touch-action:manipulation}.ng-ia-field{display:flex;flex-direction:column;gap:6px}.ng-ia-field>span{font-size:12px;color:#dce9f8}.ng-ia-field small{color:#8f9fb3;font-size:10px;line-height:1.4}.ng-ia-field textarea{resize:vertical;min-height:84px}.ng-ia-note{display:flex;gap:8px;align-items:flex-start;padding:10px;border-radius:9px;background:rgba(81,131,180,.12);color:#aabed4;font-size:11px;line-height:1.45}.ng-ia-note i{color:#82c7ff;margin-top:2px}.ng-ia-primary{justify-content:center;background:linear-gradient(135deg,#327db5,#5f55a9)!important;border-color:rgba(166,221,255,.45)!important;font-weight:700}.ng-ia-output{width:100%;min-height:250px;resize:vertical;line-height:1.55;font-size:12px}.ng-ia-result-actions .menu_button{flex:1}.ng-ia-status{min-height:18px;color:#9eb0c6;font-size:11px;line-height:1.4}.ng-ia-status.is-working{color:#b5dfff}.ng-ia-status.is-ok{color:#8de0ad}.ng-ia-status.is-error{color:#ff9e9e}',
+      '@media(max-width:760px){#ng-image-analyzer-overlay{padding:0}.ng-ia-dialog{width:100%;height:100dvh;max-height:100dvh;border-radius:0;border-left:0;border-right:0}.ng-ia-main{display:flex;flex-direction:column;padding:10px}.ng-ia-source-card{order:0}.ng-ia-options-card{order:1}.ng-ia-result-card{order:2}.ng-ia-drop{min-height:210px;max-height:39vh}.ng-ia-drop img{max-height:39vh}.ng-ia-header{padding:calc(12px + env(safe-area-inset-top)) 12px 12px}.ng-ia-title small{display:none}.ng-ia-card{padding:11px}.ng-ia-output{min-height:190px}.ng-ia-file-row .menu_button{flex:1;justify-content:center}}',
     ].join('\n');
     document.head.appendChild(style);
   }
-  function mountWandButton() {
-    const menu = document.getElementById('extensionsMenu');
-    if (!menu || document.getElementById('ng-wand-image-analyzer')) return Boolean(menu);
-    const row = document.createElement('div');
-    row.id = 'ng-wand-image-analyzer';
-    row.className = 'list-group-item flex-container flexGap5 interactable ng-wand-image-analyzer';
-    row.tabIndex = 0;
-    row.setAttribute('role', 'button');
-    row.innerHTML = '<i class="fa-solid fa-camera-retro"></i><span>Image Prompt Analyzer</span>';
-    row.addEventListener('click', event => {
-      event.stopPropagation();
-      openAnalyzer();
-    });
-    row.addEventListener('keydown', event => {
-      if (!['Enter', ' '].includes(event.key)) return;
-      event.preventDefault();
-      openAnalyzer();
-    });
-    const anchor = document.getElementById('ng-wand-studio') || document.getElementById('ng-wand-image');
-    if (anchor) anchor.insertAdjacentElement('afterend', row);
-    else menu.appendChild(row);
+  function analyzerLauncherHtml() {
+    return '<details id="ng-image-prompt-tools" class="ng-studio-section ng-image-prompt-tools" data-focus="image-prompt-analysis">'
+      + '<summary><i class="fa-solid fa-camera-retro"></i><span>Image Prompt from Reference</span><i class="fa-solid fa-chevron-down"></i></summary>'
+      + '<div class="ng-studio-section-body"><p class="ng-muted">Upload a reference image, analyze its visible details, then edit or apply the generated prompt directly to Novel Gen.</p>'
+      + '<div class="ng-actions"><button id="ng-open-image-analyzer" class="menu_button" type="button"><i class="fa-solid fa-image"></i> Open Image Prompt Analyzer</button></div>'
+      + '</div></details>';
+  }
+
+  function mountStudioLauncher() {
+    byId('ng-wand-image-analyzer')?.remove();
+    const panel = byId('ng-generate-panel');
+    if (!panel || byId('ng-image-prompt-tools')) return Boolean(panel);
+    const promptSection = panel.querySelector('details[data-focus="prompt"]');
+    const anchor = byId('ng-v055-ai-helper') || promptSection;
+    if (anchor) anchor.insertAdjacentHTML('afterend', analyzerLauncherHtml());
+    else panel.insertAdjacentHTML('afterbegin', analyzerLauncherHtml());
+    byId('ng-open-image-analyzer')?.addEventListener('click', openAnalyzer);
     return true;
   }
 
   function startMount() {
-    if (mountWandButton()) return;
-    let attempts = 0;
-    const timer = setInterval(() => {
-      attempts += 1;
-      if (mountWandButton() || attempts > 120) clearInterval(timer);
-    }, 250);
+    byId('ng-wand-image-analyzer')?.remove();
+    mountStudioLauncher();
+    globalThis.__novelGenerationImageAnalyzerMountObserver?.disconnect?.();
+    const observer = new MutationObserver(() => {
+      byId('ng-wand-image-analyzer')?.remove();
+      mountStudioLauncher();
+    });
+    observer.observe(document.documentElement, { childList: true, subtree: true });
+    globalThis.__novelGenerationImageAnalyzerMountObserver = observer;
   }
 
   globalThis.__novelGenerationImageAnalyzerReady = true;
