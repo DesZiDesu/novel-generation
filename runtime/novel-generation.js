@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.5.9';
+const VERSION = '0.6.0';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -412,11 +412,14 @@ function makeWandRow(id, icon, label, className = '') {
   return row;
 }
 
-function bindPress(row, handler) {
+function bindPress(row, handler, options = {}) {
   const run = event => {
     if (event.type === 'keydown' && !['Enter', ' '].includes(event.key)) return;
     if (event.type === 'keydown') event.preventDefault();
-    event.stopPropagation();
+    // AstraProjecta closes its modal extensions drawer from a delegated click
+    // listener on the menu host. Action rows must bubble so Astra can release
+    // its focus/scroll lock before our full-screen editor is used.
+    if (!options.allowHostClose) event.stopPropagation();
     handler(event);
   };
   row.addEventListener('click', run);
@@ -472,7 +475,7 @@ function initWand() {
 
   const studioRow = makeWandRow('ng-wand-studio', 'fa-wand-magic-sparkles', 'Novel Gen');
   anchor.insertAdjacentElement('afterend', studioRow);
-  bindPress(studioRow, () => openStudio('free', 'prompt'));
+  bindPress(studioRow, () => openStudio('free', 'prompt'), { allowHostClose: true });
   return true;
 }
 
@@ -591,6 +594,8 @@ function openStudio(mode = 'free', focus = 'prompt') {
   const overlay = document.createElement('div');
   overlay.id = 'ng-studio-overlay';
   overlay.className = 'ng-studio-overlay';
+  overlay.setAttribute('data-vaul-no-drag', '');
+  overlay.setAttribute('data-astra-extension-surface', 'novel-generation');
   overlay.innerHTML = studioHtml();
   document.documentElement.appendChild(overlay);
   document.body?.classList.add('ng-studio-open');
