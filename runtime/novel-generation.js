@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.6.2';
+const VERSION = '0.6.3';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -55,6 +55,7 @@ let studio = null;
 let escapeHandler = null;
 let mountTimer = null;
 let mountAttempts = 0;
+let astraSuspendedLayers = [];
 const gallery = [];
 const debugLog = [];
 
@@ -567,6 +568,11 @@ function studioHtml() {
   const modeName = ({ portrait: 'Portrait', selfie: 'Selfie', user: 'User', last: 'Last Message', manga: 'Manga Panel', free: 'Free / Scene' })[s.mode] || 'Free / Scene';
   return `<div class="ng-studio-shell" role="dialog" aria-modal="true">
     <header class="ng-studio-header"><div class="ng-studio-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span><strong>Novel Gen</strong><small>${modeName}</small></span></div><button id="ng-close" class="menu_button ng-studio-close" type="button"><i class="fa-solid fa-xmark"></i></button></header>
+    <nav class="ng-v055-mobile-nav" aria-label="Novel Gen mobile workspace">
+      <button class="menu_button" type="button" data-mobile-pane="preview"><i class="fa-regular fa-image"></i><span>Image</span></button>
+      <button class="menu_button is-active" type="button" data-mobile-pane="controls" data-tab="generate" aria-pressed="true"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate</span></button>
+      <button class="menu_button" type="button" data-mobile-pane="controls" data-tab="gallery"><i class="fa-solid fa-images"></i><span>Gallery</span></button>
+    </nav>
     <main class="ng-studio-main">
       <section id="ng-preview" class="ng-studio-preview"><div class="ng-preview-empty"><i class="fa-regular fa-image"></i><strong>Ready to generate</strong><span>Generated images appear here and can be reused without downloading.</span></div></section>
       <aside class="ng-studio-controls">
@@ -588,12 +594,73 @@ function studioHtml() {
   </div>`;
 }
 
+function isMobileStudioEnvironment() {
+  let contextMobile = false;
+  try {
+    const value = ctx()?.isMobile;
+    contextMobile = typeof value === 'function' ? Boolean(value.call(ctx())) : Boolean(value);
+  } catch {}
+  const screenWidth = Math.min(
+    Number(window.screen?.width) || Number.POSITIVE_INFINITY,
+    Number(window.screen?.height) || Number.POSITIVE_INFINITY,
+  );
+  return contextMobile
+    || window.innerWidth <= 760
+    || screenWidth <= 760
+    || window.matchMedia?.('(hover: none) and (pointer: coarse)')?.matches;
+}
+
+function suspendAstraExtensionsDrawer() {
+  const drawer = document.getElementById('astra-send-form-extensions-drawer');
+  if (!drawer || drawer.dataset.state === 'closed') return;
+
+  try {
+    if (drawer.contains(document.activeElement)) document.activeElement?.blur?.();
+    document.dispatchEvent(new KeyboardEvent('keydown', {
+      key: 'Escape',
+      code: 'Escape',
+      bubbles: true,
+      cancelable: true,
+    }));
+  } catch {}
+
+  const layers = [
+    drawer,
+    ...document.querySelectorAll('.astra-drawer__overlay[data-state="open"], [data-vaul-overlay][data-state="open"]'),
+  ];
+  astraSuspendedLayers = [...new Set(layers)].map(node => ({
+    node,
+    ariaHidden: node.getAttribute('aria-hidden'),
+    inert: Boolean(node.inert),
+  }));
+  for (const record of astraSuspendedLayers) {
+    record.node.dataset.ngStudioSuspended = 'true';
+    record.node.setAttribute('aria-hidden', 'true');
+    record.node.inert = true;
+  }
+}
+
+function restoreAstraExtensionsDrawer() {
+  for (const record of astraSuspendedLayers) {
+    const node = record.node;
+    if (!node?.isConnected) continue;
+    delete node.dataset.ngStudioSuspended;
+    if (record.ariaHidden == null) node.removeAttribute('aria-hidden');
+    else node.setAttribute('aria-hidden', record.ariaHidden);
+    node.inert = record.inert;
+  }
+  astraSuspendedLayers = [];
+}
+
 function openStudio(mode = 'free', focus = 'prompt') {
   closeStudio();
+  suspendAstraExtensionsDrawer();
   studio = newStudio(mode, focus);
   const overlay = document.createElement('div');
   overlay.id = 'ng-studio-overlay';
   overlay.className = 'ng-studio-overlay';
+  overlay.dataset.ngMobileLayout = isMobileStudioEnvironment() ? 'true' : 'false';
+  overlay.dataset.ngMobilePane = 'controls';
   overlay.setAttribute('data-vaul-no-drag', '');
   overlay.setAttribute('data-astra-extension-surface', 'novel-generation');
   overlay.innerHTML = studioHtml();
@@ -615,12 +682,24 @@ function openStudio(mode = 'free', focus = 'prompt') {
 function closeStudio() {
   document.getElementById('ng-studio-overlay')?.remove();
   document.body?.classList.remove('ng-studio-open');
+  restoreAstraExtensionsDrawer();
   if (escapeHandler) document.removeEventListener('keydown', escapeHandler);
   escapeHandler = null;
 }
 
 function bindStudio() {
   document.getElementById('ng-close')?.addEventListener('click', closeStudio);
+  document.querySelector('#ng-studio-overlay [data-mobile-pane="preview"]')?.addEventListener('click', () => {
+    if (typeof ngV055SetMobilePane === 'function') ngV055SetMobilePane('preview');
+  });
+  document.querySelector('#ng-studio-overlay [data-mobile-pane="controls"][data-tab="generate"]')?.addEventListener('click', () => {
+    switchTab('generate');
+    if (typeof ngV055SetMobilePane === 'function') ngV055SetMobilePane('controls');
+  });
+  document.querySelector('#ng-studio-overlay [data-mobile-pane="controls"][data-tab="gallery"]')?.addEventListener('click', () => {
+    switchTab('gallery');
+    if (typeof ngV055SetMobilePane === 'function') ngV055SetMobilePane('controls');
+  });
   document.getElementById('ng-studio-overlay')?.addEventListener('pointerdown', event => event.stopPropagation());
   document.querySelectorAll('#ng-studio-overlay [data-tab]').forEach(btn => btn.addEventListener('click', () => switchTab(btn.dataset.tab)));
   document.getElementById('ng-prompt')?.addEventListener('input', event => { studio.prompt = event.currentTarget.value; });
@@ -3779,8 +3858,7 @@ ngV053RefreshWeightedEditors();
 var NG_V055_RELEASE = '0.5.5';
 
 function ngV055IsMobile() {
-  try { return window.matchMedia('(max-width: 650px)').matches || Boolean(ctx()?.isMobile?.()); }
-  catch { return window.matchMedia('(max-width: 650px)').matches; }
+  return isMobileStudioEnvironment();
 }
 
 function ngV055Prefs() {
@@ -4126,7 +4204,7 @@ ngV055SetVersionLabels();
 
 /* ===== Consolidated runtime section 16: runtime/parts/v056-16.js ===== */
 // Novel Generation v0.5.6 — Character Prompt routing fix.
-var NG_V056_RELEASE = '0.5.6';
+var NG_V056_RELEASE = VERSION;
 
 function ngV056HasCharacterPrompts(state) {
   return Boolean((state?.characters || []).some(function (item) { return String(item?.prompt || '').trim(); }));

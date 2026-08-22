@@ -134,6 +134,14 @@
 }
 
 body.ng-studio-open { overflow: hidden !important; }
+body.ng-studio-open #extensionsMenu,
+body.ng-studio-open #astra-send-form-extensions-drawer,
+body.ng-studio-open .astra-drawer__overlay,
+body.ng-studio-open [data-ng-studio-suspended="true"] {
+  visibility: hidden !important;
+  opacity: 0 !important;
+  pointer-events: none !important;
+}
 .ng-studio-overlay {
   position: fixed !important;
   inset: 0 !important;
@@ -142,7 +150,9 @@ body.ng-studio-open { overflow: hidden !important; }
   align-items: stretch;
   justify-content: stretch;
   padding: 0;
-  background: rgba(0,0,0,.72);
+  isolation: isolate;
+  opacity: 1 !important;
+  background: #090d10;
   box-sizing: border-box;
 }
 .ng-studio-shell {
@@ -154,8 +164,11 @@ body.ng-studio-open { overflow: hidden !important; }
   overflow: hidden;
   border: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.16));
   border-radius: 12px;
-  background: var(--SmartThemeBlurTintColor, #161616);
+  background-color: #11171b;
+  background-image: linear-gradient(var(--SmartThemeBlurTintColor, #161616), var(--SmartThemeBlurTintColor, #161616));
   color: var(--SmartThemeBodyColor, inherit);
+  isolation: isolate;
+  opacity: 1 !important;
   box-shadow: 0 18px 60px rgba(0,0,0,.45);
   font-family: inherit;
 }
@@ -165,7 +178,11 @@ body.ng-studio-open { overflow: hidden !important; }
   align-items: center;
   gap: 10px;
   padding: 10px 12px;
-  background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #161616) 94%, black 6%);
+  background-color: #0f1418;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--SmartThemeBlurTintColor, #161616) 94%, black 6%),
+    color-mix(in srgb, var(--SmartThemeBlurTintColor, #161616) 94%, black 6%)
+  );
 }
 .ng-studio-header { justify-content: space-between; border-bottom: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14)); }
 .ng-studio-footer { justify-content: flex-end; border-top: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14)); }
@@ -178,6 +195,7 @@ body.ng-studio-open { overflow: hidden !important; }
   display: grid;
   grid-template-columns: minmax(0, 1.55fr) minmax(360px, .75fr);
   min-height: 0;
+  background: #11171b;
 }
 .ng-studio-preview {
   min-width: 0;
@@ -190,7 +208,8 @@ body.ng-studio-open { overflow: hidden !important; }
     linear-gradient(45deg, rgba(255,255,255,.025) 25%, transparent 25%) 0 0/20px 20px,
     linear-gradient(-45deg, rgba(255,255,255,.025) 25%, transparent 25%) 0 10px/20px 20px,
     linear-gradient(45deg, transparent 75%, rgba(255,255,255,.025) 75%) 10px -10px/20px 20px,
-    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.025) 75%) -10px 0/20px 20px;
+    linear-gradient(-45deg, transparent 75%, rgba(255,255,255,.025) 75%) -10px 0/20px 20px,
+    linear-gradient(#11171b, #11171b);
 }
 .ng-preview-empty {
   max-width: 420px;
@@ -209,7 +228,11 @@ body.ng-studio-open { overflow: hidden !important; }
   overflow-y: auto;
   border-left: 1px solid var(--SmartThemeBorderColor, rgba(255,255,255,.14));
   padding: 10px;
-  background: color-mix(in srgb, var(--SmartThemeBlurTintColor, #161616) 96%, black 4%);
+  background-color: #0f1519;
+  background-image: linear-gradient(
+    color-mix(in srgb, var(--SmartThemeBlurTintColor, #161616) 96%, black 4%),
+    color-mix(in srgb, var(--SmartThemeBlurTintColor, #161616) 96%, black 4%)
+  );
   overscroll-behavior: contain;
 }
 .ng-studio-tabs {
@@ -1016,7 +1039,7 @@ body.ng-image-viewer-open {
   gap: 8px;
 }
 
-@media (max-width: 650px) {
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
   #ng-studio-overlay .ng-studio-shell {
     height: 100dvh !important;
     max-height: 100dvh !important;
