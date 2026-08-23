@@ -2,12 +2,21 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.12';
+const VERSION = '0.7.13';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
   square: [1024, 1024, 'Square'],
   landscape: [1216, 832, 'Horizontal / Landscape'],
+};
+
+// RVL's chat wrapper accepts exactly the same three colon-delimited canvas
+// values used by its public generator. Unsupported custom sizes resolve to
+// the site's portrait default instead of being forwarded ambiguously.
+const NG_RVL_CHAT_SIZES = {
+  '832x1216': '832:1216',
+  '1024x1024': '1024:1024',
+  '1216x832': '1216:832',
 };
 
 const NAI_DIRECT_BASE_URL = 'https://image.novelai.net';
@@ -92,13 +101,16 @@ function ngIsRvlProxy() {
 }
 
 function ngImageSizeValue(model, width, height, route = 'images') {
-  const separator = route === 'chat' && ngUsesCompactChatImageRoute(model) ? ':' : 'x';
-  return `${Math.round(width)}${separator}${Math.round(height)}`;
+  const key = `${Math.round(width)}x${Math.round(height)}`;
+  if (route === 'chat' && ngUsesCompactChatImageRoute(model)) {
+    return NG_RVL_CHAT_SIZES[key] || NG_RVL_CHAT_SIZES['832x1216'];
+  }
+  return key;
 }
 
 function ngRvlChatSeed(state) {
   const selected = Math.trunc(Number(state?.seed));
-  if (Number.isSafeInteger(selected) && selected >= 0) return selected;
+  if (Number.isSafeInteger(selected) && selected > 0) return selected;
   if (state && typeof state === 'object' && ngRvlRequestSeeds.has(state)) {
     return ngRvlRequestSeeds.get(state);
   }
@@ -449,7 +461,7 @@ const base = () => {
   return (isDirectNovelAI() ? (configured || NAI_DIRECT_BASE_URL) : configured).replace(/\/+$/, '');
 };
 const endpoint = path => /\/v1$/i.test(base()) ? `${base()}${path.replace(/^\/v1/, '')}` : `${base()}${path}`;
-const headers = () => ({ 'Content-Type': 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) });
+const headers = () => ({ 'Content-Type': 'application/json', Accept: 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) });
 
 async function errText(response) {
   try {
@@ -1412,12 +1424,12 @@ function requestCandidates(state) {
 function routeCandidates() {
   const s = settings();
   const mode = s.routeMode;
-  if (mode === 'images') return ['images'];
-  if (mode === 'chat') return ['chat'];
-  // RVL's normal NAI V5/V4.5 models use the compact chat-completions schema.
-  // Only the model explicitly marked [备用] uses images/generations.
+  // RVL does not route its normal NAI V5/V4.5 models through the images API,
+  // even when a generic route override was previously saved in the extension.
   if (ngUsesCompactChatImageRoute(s.model)) return ['chat'];
   if (ngUsesBackupImagesRoute(s.model)) return ['images'];
+  if (mode === 'images') return ['images'];
+  if (mode === 'chat') return ['chat'];
   return ['images', 'chat'];
 }
 
@@ -1454,13 +1466,14 @@ function chatPayloadFrom(payload, state) {
     const content = negative
       ? `${state.prompt.trim()}\n\nNegative prompt: ${negative}`
       : state.prompt.trim();
+    const [rvlWidth, rvlHeight] = imageConfig.size.split(':').map(Number);
     return cleanObject({
       model,
       messages: [{ role: 'user', content }],
       max_tokens: 16,
       size: imageConfig.size,
-      width: imageConfig.width,
-      height: imageConfig.height,
+      width: rvlWidth,
+      height: rvlHeight,
       seed: ngRvlChatSeed(state),
     });
   }
@@ -2343,6 +2356,37 @@ async function postGeneration(route, candidate, state, signal) {
   return { images, data, schema: candidate.name, route, referenceVerified: false };
 }
 
+async function ngGenerateRvlExact(state, signal) {
+  const count = Math.max(1, Math.min(10, Math.round(Number(state.n) || 1)));
+  const selectedSeed = Math.trunc(Number(state.seed));
+  const fixedSeed = Number.isSafeInteger(selectedSeed) && selectedSeed > 0 ? selectedSeed : 0;
+  const images = [];
+  const seeds = [];
+  let lastResult = null;
+
+  // RVL generates a requested batch as sequential one-image chat requests.
+  // Random mode therefore receives a fresh positive six-digit seed per image;
+  // a user-supplied positive seed is reused exactly as on the public page.
+  for (let index = 0; index < count; index += 1) {
+    const requestState = { ...state, n: 1, seed: fixedSeed || -1 };
+    ngRvlRequestSeeds.delete(requestState);
+    lastResult = await postGeneration('chat', {
+      name: 'rvl-exact-chat',
+      payload: { model: settings().model },
+    }, requestState, signal);
+    images.push(...lastResult.images.slice(0, 1));
+    seeds.push(ngRvlChatSeed(requestState));
+  }
+
+  return {
+    ...lastResult,
+    images,
+    seeds,
+    schema: 'rvl-exact-chat',
+    route: 'chat',
+  };
+}
+
 async function generateState(state, label = 'Generating…') {
   ngRvlRequestSeeds.delete(state);
   const s = settings();
@@ -2356,9 +2400,16 @@ async function generateState(state, label = 'Generating…') {
   if (state.editMode === 'inpaint' && state.source && !state.mask) throw new Error('Paint an inpaint mask before generating.');
 
   const controller = new AbortController();
-  const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs));
+  const rvlRequestCount = ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source
+    ? Math.max(1, Math.min(10, Math.round(Number(state.n) || 1)))
+    : 1;
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs) * rvlRequestCount);
   const failures = [];
   try {
+    if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
+      return await ngGenerateRvlExact(state, controller.signal);
+    }
+
     if (!ngProviderCaps.checked) {
       try { await ngProbeAdvancedCapabilities(); } catch (error) { console.debug('[Novel Generation] capability probe before generation failed', error); }
     }
