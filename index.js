@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.9';
+const VERSION = '0.7.10';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -64,6 +64,7 @@ let studioLaunchSequence = 0;
 const gallery = [];
 const debugLog = [];
 const unavailableAutoRoutes = new Set();
+const ngRvlRequestSeeds = new WeakMap();
 
 const ctx = () => SillyTavern.getContext();
 const clone = value => typeof structuredClone === 'function'
@@ -93,6 +94,19 @@ function ngIsRvlProxy() {
 function ngImageSizeValue(model, width, height, route = 'images') {
   const separator = route === 'chat' && ngUsesCompactChatImageRoute(model) ? ':' : 'x';
   return `${Math.round(width)}${separator}${Math.round(height)}`;
+}
+
+function ngRvlChatSeed(state) {
+  const selected = Math.trunc(Number(state?.seed));
+  if (Number.isSafeInteger(selected) && selected >= 0) return selected;
+  if (state && typeof state === 'object' && ngRvlRequestSeeds.has(state)) {
+    return ngRvlRequestSeeds.get(state);
+  }
+  // RVL's Go request schema uses uint64, so Novel Generation's -1 random
+  // sentinel must become a positive seed before the request is serialized.
+  const generated = Math.floor(Math.random() * 900000) + 100000;
+  if (state && typeof state === 'object') ngRvlRequestSeeds.set(state, generated);
+  return generated;
 }
 
 function ngResolveCanvasSize(image) {
@@ -1444,7 +1458,7 @@ function chatPayloadFrom(payload, state) {
       size: imageConfig.size,
       width: imageConfig.width,
       height: imageConfig.height,
-      seed: Number(state.seed),
+      seed: ngRvlChatSeed(state),
     });
   }
   return {
@@ -1534,6 +1548,7 @@ async function postGeneration(route, candidate, state, signal) {
 }
 
 async function generateState(state, label = 'Generating…') {
+  ngRvlRequestSeeds.delete(state);
   const s = settings();
   if (!base()) throw new Error('Set Base URL in the Novel Generation drawer first.');
   if (!apiKey) throw new Error('Enter and test the API key first.');
@@ -2321,6 +2336,7 @@ async function postGeneration(route, candidate, state, signal) {
 }
 
 async function generateState(state, label = 'Generating…') {
+  ngRvlRequestSeeds.delete(state);
   const s = settings();
   if (!base()) throw new Error('Set Base URL in the Novel Generation drawer first.');
   if (!apiKey) throw new Error('Enter and test the API key first.');
@@ -5401,7 +5417,7 @@ ngV068TrimGallery();
 
 
 /* ===== Runtime 19: AI Prompt Helper output modes ===== */
-// Novel Generation v0.7.9 — text ideas can become pure tags, a natural-language
+// Novel Generation v0.7.10 — text ideas can become pure tags, a natural-language
 // prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
 var NG_V070_RELEASE = VERSION;
 
