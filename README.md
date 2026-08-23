@@ -60,11 +60,9 @@ Equal emphasis values do not guarantee an equal-looking style blend. Artist tags
 ## Proxy response compatibility
 
 - Chat-completion image proxies may return the generated image directly in `choices[].message.content` as a `data:image/...;base64,...` URL. Novel Generation recognizes this response and stops fallback attempts as soon as the image is found.
-- Chat image requests send the selected pixel size through both the Novel Generation envelope and the standard top-level `image_config`, including an exact aspect ratio. This prevents compatible chat proxies from silently using their default horizontal canvas when Portrait is selected.
-- Every returned image is decoded and checked against the requested dimensions. If a provider still ignores or swaps width and height, the real returned size is shown in the gallery and Request Debug records a `dimension-check` entry instead of reporting the requested size as though it succeeded.
-- **Chat proxy size order** can be set to Auto, Standard, or Reversed under Image Parameters. Auto learns an exact width/height reversal after one mismatch and swaps only future chat transport dimensions; it never launches an unapproved second paid generation.
-- **Returned-size safeguard** permanently handles proxies that ignore every size field. The default Exact size — center crop mode converts only mismatched responses to the selected pixel dimensions in the browser. Exact size — fit + blurred background preserves the whole provider image. Both make a PNG locally, record the correction in Request Debug, and make zero additional generation requests; Keep provider original disables processing.
 - In Auto route mode, a missing `/v1/images/generations` endpoint is remembered for the current page session. The extension tries `/v1/chat/completions` immediately instead of repeating the same request with every image payload schema.
+- Ordinary generation now sends the complete model-specific NovelAI JSON envelope first. V4/V4.5 use `params_version: 3`; V5 uses `params_version: 4` with the V5 preset identifiers. Width, height, prompt structures, negative prompt, sampler, schedule, seed, and character data live together inside `parameters` while the compatible OpenAI fields remain at the wrapper level.
+- No orientation state is learned or shared between models. The extension does not swap dimensions, crop, resize, rotate, or automatically repeat a paid generation. The provider response is kept byte-for-byte for Save Original.
 
 ## AI Prompt Helper formats
 
