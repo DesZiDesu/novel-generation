@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.11';
+const VERSION = '0.7.12';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -107,17 +107,6 @@ function ngRvlChatSeed(state) {
   const generated = Math.floor(Math.random() * 900000) + 100000;
   if (state && typeof state === 'object') ngRvlRequestSeeds.set(state, generated);
   return generated;
-}
-
-function ngRvlFallbackModel(model, status, responseText) {
-  const value = String(model || '').trim();
-  if (!ngIsRvlProxy() || !/nai-diffusion-5(?:-|$)/i.test(value)) return '';
-  const failure = `${status} ${String(responseText || '')}`;
-  return status === 502
-    || status === 530
-    || /Cloudflare Tunnel|unable to reach|bad_response_status_code|暂时无法连接图像服务|请稍后重试/i.test(failure)
-    ? 'nai-diffusion-4-5-full'
-    : '';
 }
 
 function ngResolveCanvasSize(image) {
@@ -1549,16 +1538,6 @@ async function postGeneration(route, candidate, state, signal) {
     response: safePayloadForDebug(data),
   });
   if (!response.ok) {
-    const fallbackModel = !candidate.rvlFallback
-      ? ngRvlFallbackModel(body.model, response.status, raw)
-      : '';
-    if (route === 'chat' && fallbackModel) {
-      return postGeneration(route, {
-        name: 'rvl-v4.5-fallback',
-        rvlFallback: true,
-        payload: { ...candidate.payload, model: fallbackModel },
-      }, state, signal);
-    }
     throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
   }
   const images = extractImages(data);
@@ -2357,16 +2336,6 @@ async function postGeneration(route, candidate, state, signal) {
     reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable',
   });
   if (!response.ok) {
-    const fallbackModel = !candidate.rvlFallback
-      ? ngRvlFallbackModel(body.model, response.status, raw)
-      : '';
-    if (route === 'chat' && fallbackModel) {
-      return postGeneration(route, {
-        name: 'rvl-v4.5-fallback',
-        rvlFallback: true,
-        payload: { ...candidate.payload, model: fallbackModel },
-      }, state, signal);
-    }
     throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
   }
   const images = extractImages(data);
