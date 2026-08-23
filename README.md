@@ -60,6 +60,8 @@ Equal emphasis values do not guarantee an equal-looking style blend. Artist tags
 ## Proxy response compatibility
 
 - Chat-completion image proxies may return the generated image directly in `choices[].message.content` as a `data:image/...;base64,...` URL. Novel Generation recognizes this response and stops fallback attempts as soon as the image is found.
+- Chat image requests send the selected pixel size through both the Novel Generation envelope and the standard top-level `image_config`, including an exact aspect ratio. This prevents compatible chat proxies from silently using their default horizontal canvas when Portrait is selected.
+- Every returned image is decoded and checked against the requested dimensions. If a provider still ignores or swaps width and height, the real returned size is shown in the gallery and Request Debug records a `dimension-check` entry instead of reporting the requested size as though it succeeded.
 - In Auto route mode, a missing `/v1/images/generations` endpoint is remembered for the current page session. The extension tries `/v1/chat/completions` immediately instead of repeating the same request with every image payload schema.
 
 ## AI Prompt Helper formats

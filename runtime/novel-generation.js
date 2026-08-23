@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.0';
+const VERSION = '0.7.1';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -1278,11 +1278,47 @@ function routeCandidates() {
 }
 
 function chatPayloadFrom(payload, state) {
+  const width = Math.max(64, Math.round(Number(state.width) || 832));
+  const height = Math.max(64, Math.round(Number(state.height) || 1216));
+  const divisor = (left, right) => {
+    let a = Math.abs(left);
+    let b = Math.abs(right);
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
+  };
+  const ratioDivisor = divisor(width, height);
+  const exactRatio = width / height;
+  const commonRatios = [
+    ['1:1', 1], ['2:3', 2 / 3], ['3:2', 3 / 2], ['3:4', 3 / 4], ['4:3', 4 / 3],
+    ['9:16', 9 / 16], ['16:9', 16 / 9], ['4:5', 4 / 5], ['5:4', 5 / 4],
+  ];
+  const closest = commonRatios.reduce((best, item) => Math.abs(item[1] - exactRatio) < Math.abs(best[1] - exactRatio) ? item : best);
+  const aspectRatio = Math.abs(closest[1] - exactRatio) / exactRatio <= 0.04
+    ? closest[0]
+    : `${width / ratioDivisor}:${height / ratioDivisor}`;
+  const imageConfig = {
+    // Chat image APIs (including OpenRouter-compatible wrappers) read image
+    // controls from top-level `image_config`, not only from a custom nested
+    // `image_generation` object. Keep exact pixels and aspect ratio together so
+    // a provider cannot silently fall back to its default landscape canvas.
+    size: `${width}x${height}`,
+    aspect_ratio: aspectRatio,
+    width,
+    height,
+  };
   return {
     model: payload.model,
     messages: [{ role: 'user', content: state.prompt.trim() }],
     modalities: ['text', 'image'],
-    image_generation: payload,
+    image_config: imageConfig,
+    image_generation: cleanObject({
+      ...payload,
+      size: imageConfig.size,
+      width,
+      height,
+      aspect_ratio: aspectRatio,
+      image_config: imageConfig,
+    }),
   };
 }
 
@@ -1472,17 +1508,22 @@ function norm(value) {
 
 function rememberImages(images, state, extra = {}) {
   if (!settings().roleplay.gallery) return;
-  images.forEach(src => gallery.unshift({
+  const dimensions = Array.isArray(extra.dimensions) ? extra.dimensions : [];
+  const itemExtra = { ...extra };
+  delete itemExtra.dimensions;
+  images.forEach((src, index) => gallery.unshift({
     id: `${Date.now()}-${Math.random().toString(36).slice(2)}`,
     src,
     prompt: state.prompt,
     negative: state.negative,
     model: settings().model,
-    width: state.width,
-    height: state.height,
+    width: dimensions[index]?.width || state.width,
+    height: dimensions[index]?.height || state.height,
+    requestedWidth: state.width,
+    requestedHeight: state.height,
     seed: state.seed,
     createdAt: new Date().toISOString(),
-    ...extra,
+    ...itemExtra,
   }));
   ngV068TrimGallery(settings().roleplay.galleryLimit);
   ngV068UpdateGalleryCount();
@@ -1496,9 +1537,12 @@ async function generateStudio() {
   try {
     const result = await generateState(studio);
     studio.generated = result.images;
+    studio.generatedDimensions = result.dimensions;
     showImages(result.images);
-    rememberImages(result.images, studio, { schema: result.schema, route: result.route });
-    if (out) out.textContent = `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'} using ${result.schema}.`;
+    rememberImages(result.images, studio, { schema: result.schema, route: result.route, dimensions: result.dimensions });
+    if (out) out.textContent = result.dimensionWarning
+      ? `Generated, but ${result.dimensionWarning}`
+      : `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'} using ${result.schema}.`;
   } catch (error) {
     if (out) out.textContent = `Generation failed: ${error.message}`;
     toast('error', error.message);
@@ -1514,7 +1558,7 @@ async function quickGenerate(mode, manualPrompt = '') {
   toast('info', `Generating ${mode === 'last' ? 'the current scene' : mode}…`);
   try {
     const result = await generateState(state);
-    rememberImages(result.images, state, { schema: result.schema, route: result.route, quick: true });
+    rememberImages(result.images, state, { schema: result.schema, route: result.route, quick: true, dimensions: result.dimensions });
     if (settings().roleplay.autoInsert) await insertImagesIntoChat(result.images, state.prompt);
     toast('success', settings().roleplay.autoInsert ? `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'} and inserted into chat.` : `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'}.`);
   } catch (error) {
@@ -2097,7 +2141,52 @@ async function ngPostNativeGeneration(state, signal) {
   const parsed = await ngNativeResponseImages(response);
   debugAttempt({ route: 'native', schema: 'nai-native-route', status: response.status, ms: Math.round(performance.now() - started), payload: safePayloadForDebug(payload), response: parsed.debug, reference_consumption: hasAdvancedReferences(state) ? 'native-route' : 'not-applicable' });
   if (!parsed.images.length) throw Object.assign(new Error('Native NovelAI route returned success but no image could be decoded.'), { status: 200 });
-  return { images: parsed.images, data: parsed.debug, schema: 'nai-native-route', route: 'native', referenceVerified: hasAdvancedReferences(state) };
+  const checked = await ngVerifyGeneratedDimensions(parsed.images, state, 'native', 'nai-native-route');
+  return { images: parsed.images, data: parsed.debug, schema: 'nai-native-route', route: 'native', referenceVerified: hasAdvancedReferences(state), dimensions: checked.dimensions, dimensionWarning: checked.warning };
+}
+
+function ngGeneratedImageDimensions(src) {
+  return new Promise(resolve => {
+    const image = new Image();
+    let settled = false;
+    const finish = dimensions => {
+      if (settled) return;
+      settled = true;
+      clearTimeout(timer);
+      image.onload = null;
+      image.onerror = null;
+      resolve(dimensions);
+    };
+    const timer = setTimeout(() => finish({ width: 0, height: 0 }), 5000);
+    image.onload = () => finish({ width: image.naturalWidth || 0, height: image.naturalHeight || 0 });
+    image.onerror = () => finish({ width: 0, height: 0 });
+    image.src = src;
+  });
+}
+
+async function ngVerifyGeneratedDimensions(images, state, route, schema) {
+  const requested = {
+    width: Math.max(1, Math.round(Number(state.width) || 0)),
+    height: Math.max(1, Math.round(Number(state.height) || 0)),
+  };
+  const dimensions = await Promise.all(images.map(ngGeneratedImageDimensions));
+  const mismatch = dimensions.find(item => item.width && item.height
+    && (item.width !== requested.width || item.height !== requested.height));
+  if (!mismatch) return { dimensions, warning: '' };
+
+  const orientation = value => value.width === value.height ? 'square' : value.width > value.height ? 'horizontal' : 'vertical';
+  const reversed = mismatch.width === requested.height && mismatch.height === requested.width;
+  const warning = `the provider returned ${mismatch.width}×${mismatch.height} (${orientation(mismatch)}) instead of ${requested.width}×${requested.height} (${orientation(requested)}). ${reversed ? 'It swapped width and height.' : 'It ignored or changed the requested size.'} Check Request Debug; the extension sent both exact pixels and aspect ratio.`;
+  debugAttempt({
+    route,
+    schema: `${schema}-dimension-check`,
+    status: 200,
+    payload: { requested },
+    response: { returned: dimensions, reversed },
+    size_mismatch: true,
+  });
+  toast('warning', warning);
+  return { dimensions, warning };
 }
 
 // OpenAI-wrapper success no longer fails because `usage.image_tokens` is zero.
@@ -2130,7 +2219,8 @@ async function postGeneration(route, candidate, state, signal) {
   if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
   const images = extractImages(data);
   if (!images.length) throw Object.assign(new Error('Provider returned success but no image URL/base64 was found in the response.'), { status: 200 });
-  return { images, data, schema: candidate.name, route, referenceVerified: false };
+  const checked = await ngVerifyGeneratedDimensions(images, state, route, candidate.name);
+  return { images, data, schema: candidate.name, route, referenceVerified: false, dimensions: checked.dimensions, dimensionWarning: checked.warning };
 }
 
 async function generateState(state, label = 'Generating…') {
@@ -2295,7 +2385,7 @@ async function runUpscale(mode) {
   try {
     const result = await generateState(rerender, 'Upscale failed.');
     showImages(result.images);
-    rememberImages(result.images, rerender, { upscale: mode, schema: result.schema, route: result.route });
+    rememberImages(result.images, rerender, { upscale: mode, schema: result.schema, route: result.route, dimensions: result.dimensions });
     if (out) out.textContent = `Upscale completed with high-resolution img2img fallback.`;
   } catch (error) {
     if (out) out.textContent = `Upscale failed: ${error.message}`;
@@ -2998,7 +3088,7 @@ quickGenerate = async function(mode, manualPrompt = '') {
   toast('info', `Generating ${mode === 'last' ? 'the current roleplay scene' : mode}…`);
   try {
     const result = await generateState(state);
-    rememberImages(result.images, state, { schema: result.schema, route: result.route, quick: true, chatContext: true });
+    rememberImages(result.images, state, { schema: result.schema, route: result.route, quick: true, chatContext: true, dimensions: result.dimensions });
     if (settings().roleplay.autoInsert) await insertImagesIntoChat(result.images, state.prompt);
     toast('success', settings().roleplay.autoInsert
       ? `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'} from chat context and inserted into chat.`
@@ -3470,8 +3560,9 @@ function showImages(images) {
       + '<img class="ng-viewable-image" src="' + attr(src) + '" alt="Generated image"></button><figcaption>'
       + generatedActions(src, index) + '</figcaption></figure>';
   }).join('') + '</div>';
-  bindGeneratedActions(preview, images, images.map(function () {
-    return { prompt: studio?.prompt || '', model: settings().model, width: studio?.width, height: studio?.height };
+  bindGeneratedActions(preview, images, images.map(function (_src, index) {
+    var dimensions = studio?.generatedDimensions?.[index];
+    return { prompt: studio?.prompt || '', model: settings().model, width: dimensions?.width || studio?.width, height: dimensions?.height || studio?.height };
   }));
 }
 
@@ -5197,7 +5288,7 @@ ngV068TrimGallery();
 
 
 /* ===== Consolidated runtime section 19: AI Prompt Helper output modes ===== */
-// Novel Generation v0.7.0 — text ideas can become pure tags, a natural-language
+// Novel Generation v0.7.1 — text ideas can become pure tags, a natural-language
 // prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
 var NG_V070_RELEASE = VERSION;
 
