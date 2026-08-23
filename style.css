@@ -1,5 +1,5 @@
 
-/* ===== Consolidated stylesheet section 01: style.css ===== */
+/* ===== Styles 01: core settings and Studio ===== */
 #ng-settings {
   --ng-border: var(--SmartThemeBorderColor, rgba(255,255,255,.14));
   --ng-soft: color-mix(in srgb, currentColor 7%, transparent);
@@ -417,7 +417,7 @@ body.ng-studio-open #astra-send-form-extensions-drawer {
 }
 
 
-/* ===== Consolidated stylesheet section 02: style-v040.css ===== */
+/* ===== Styles 02: Prompt Assistant and artist browser ===== */
 /* Novel Generation v0.4.0 — Prompt Assistant / Danbooru artist browser */
 .ng-v040-toolbar,
 .ng-v040-search-row,
@@ -519,7 +519,7 @@ body.ng-studio-open #astra-send-form-extensions-drawer {
 }
 
 
-/* ===== Consolidated stylesheet section 03: style-v052.css ===== */
+/* ===== Styles 03: mobile viewer, gallery, and size tools ===== */
 /* Novel Generation v0.5.2 — mobile image viewer, gallery/save fixes, size tools. */
 
 .ng-image-tap-target {
@@ -860,7 +860,7 @@ body.ng-image-viewer-open {
 }
 
 
-/* ===== Consolidated stylesheet section 04: style-v053.css ===== */
+/* ===== Styles 04: weighted prompt visualization ===== */
 /* Novel Generation v0.5.4 — weighted prompt visualization with mobile-safe editing. */
 .ng-weight-editor {
   position: relative;
@@ -1021,7 +1021,7 @@ body.ng-image-viewer-open {
 }
 
 
-/* ===== Consolidated stylesheet section 06: Artist Mix reliability ===== */
+/* ===== Styles 05: Artist Mix reliability ===== */
 /* Novel Generation v0.6.7 — structured mix controls and effective prompt preview. */
 .ng-v067-artist-controls {
   display: grid;
@@ -1085,7 +1085,7 @@ body.ng-image-viewer-open {
 }
 
 
-/* ===== Consolidated stylesheet section 08: AI Prompt Helper output modes ===== */
+/* ===== Styles 06: AI Prompt Helper output modes ===== */
 .ng-v070-ai-format {
   display: grid;
   grid-template-columns: repeat(2, minmax(0, 1fr));
@@ -1110,7 +1110,7 @@ body.ng-image-viewer-open {
 }
 
 
-/* ===== Consolidated stylesheet section 07: Gallery memory controls ===== */
+/* ===== Styles 07: gallery memory controls ===== */
 /* Novel Generation v0.6.8 — original save feedback and mobile-safe cleanup. */
 .ng-v068-gallery-toolbar {
   position: sticky;
@@ -1176,7 +1176,7 @@ body.ng-image-viewer-open {
 }
 
 
-/* ===== Consolidated stylesheet section 05: style-v055.css ===== */
+/* ===== Styles 08: mobile workspace and AI Prompt Helper ===== */
 /* Novel Generation v0.5.5 — mobile workspace + AI Prompt Helper. */
 .ng-v055-mobile-nav { display: none; }
 

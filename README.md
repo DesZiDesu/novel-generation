@@ -26,6 +26,15 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 
 The runtime and stylesheet are consolidated into one file each. The current UI and connection layer include persistent API-key storage, proxy model discovery, a Direct NovelAI provider mode, official native image routing, Vibe Transfer encoding, separate Character Prompts, Precise Reference, image editing, gallery/export, mobile Studio navigation, and the Prompt Assistant. Provider-specific route differences are handled through explicit adapter attempts and surfaced in Request Debug when unsupported.
 
+## Repository layout
+
+- `index.js` — the complete extension runtime, including Reference Image Analysis.
+- `style.css` — all extension styling.
+- `manifest.json` — the SillyTavern extension manifest.
+- `README.md` — installation and feature documentation.
+
+Versioned bootstrap, runtime, and stylesheet copies are intentionally not kept in the working tree. Git history provides rollback without making the installed extension load through duplicate files.
+
 ## Full Photo Analysis
 
 The **Reference Image Analysis** workspace is available inside Novel Gen → AI Prompt Helper.
