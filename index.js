@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.7';
+const VERSION = '0.7.8';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -73,6 +73,11 @@ const clone = value => typeof structuredClone === 'function'
 function ngCanvasOrientation(width, height) {
   if (width === height) return 'square';
   return width < height ? 'vertical' : 'horizontal';
+}
+
+function ngImageSizeValue(model, width, height) {
+  const separator = /nai-diffusion-5(?:-|$)/i.test(String(model || '')) ? ':' : 'x';
+  return `${Math.round(width)}${separator}${Math.round(height)}`;
 }
 
 function ngResolveCanvasSize(image) {
@@ -1163,7 +1168,7 @@ function strictPayload(state) {
     model: s.model,
     prompt: state.prompt.trim(),
     n: Math.max(1, Math.min(4, +state.n || 1)),
-    size: `${Math.round(state.width)}x${Math.round(state.height)}`,
+    size: ngImageSizeValue(s.model, state.width, state.height),
     response_format: s.responseFormat,
   };
 }
@@ -1401,7 +1406,7 @@ function ngAspectRatioLabel(width, height) {
 function chatPayloadFrom(payload, state) {
   const canvas = ngResolveCanvasSize(state);
   const imageConfig = {
-    size: `${canvas.width}x${canvas.height}`,
+    size: ngImageSizeValue(payload.model || settings().model, canvas.width, canvas.height),
     aspect_ratio: ngAspectRatioLabel(canvas.width, canvas.height),
     width: canvas.width,
     height: canvas.height,
@@ -1412,7 +1417,8 @@ function chatPayloadFrom(payload, state) {
     modalities: ['text', 'image'],
     // Chat-completion image wrappers commonly read canvas controls here rather
     // than from a provider-specific nested envelope. These are the same values,
-    // never reversed: Portrait remains 832 x 1216 at every layer.
+    // never reversed: Portrait remains 832 by 1216 at every layer. NAI V5
+    // wrappers receive `832:1216`; V4.5 and other models retain `832x1216`.
     image_config: imageConfig,
     image_generation: cleanObject({
       ...payload,
@@ -5360,7 +5366,7 @@ ngV068TrimGallery();
 
 
 /* ===== Runtime 19: AI Prompt Helper output modes ===== */
-// Novel Generation v0.7.7 — text ideas can become pure tags, a natural-language
+// Novel Generation v0.7.8 — text ideas can become pure tags, a natural-language
 // prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
 var NG_V070_RELEASE = VERSION;
 
