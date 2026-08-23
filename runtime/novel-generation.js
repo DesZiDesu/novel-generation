@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.1';
+const VERSION = '0.7.2';
 
 const SIZES = {
   portrait: [832, 1216, 'Portrait'],
@@ -27,6 +27,8 @@ const DEFAULTS = {
   responseFormat: 'b64_json',
   compatibility: 'auto',
   routeMode: 'auto',
+  chatDimensionOrder: 'auto',
+  chatDimensionCorrectionLearned: false,
   timeoutMs: 120000,
   autoInsertTarget: 'assistant',
   image: {
@@ -77,6 +79,8 @@ function settings() {
   for (const [key, value] of Object.entries(DEFAULTS)) if (!(key in s)) s[key] = clone(value);
   for (const [key, value] of Object.entries(DEFAULTS.image)) if (!(key in s.image)) s.image[key] = clone(value);
   for (const [key, value] of Object.entries(DEFAULTS.roleplay)) if (!(key in s.roleplay)) s.roleplay[key] = clone(value);
+  if (!['auto', 'standard', 'swapped'].includes(s.chatDimensionOrder)) s.chatDimensionOrder = 'auto';
+  if (typeof s.chatDimensionCorrectionLearned !== 'boolean') s.chatDimensionCorrectionLearned = false;
   if (typeof s.apiKey !== 'string') s.apiKey = '';
   if (typeof s.proxyBaseUrl !== 'string') s.proxyBaseUrl = s.provider === 'proxy' ? s.baseUrl : '';
   if (typeof s.proxyApiKey !== 'string') s.proxyApiKey = s.provider === 'proxy' ? s.apiKey : '';
@@ -156,6 +160,7 @@ function settingsHtml() {
 
   const image = `<p class="ng-muted">Smart sizes use NovelAI-friendly portrait, square, and horizontal defaults. Custom remains available when the proxy accepts other dimensions.</p>${sizePicker('ng', s.image)}
     <div class="ng-grid ng-grid-2">
+      ${field('Chat proxy size order', `<select id="ng-chat-dimension-order" class="text_pole"><option value="auto" ${s.chatDimensionOrder === 'auto' ? 'selected' : ''}>Auto-detect${s.chatDimensionCorrectionLearned ? ' — reversed learned' : ''}</option><option value="standard" ${s.chatDimensionOrder === 'standard' ? 'selected' : ''}>Standard width × height</option><option value="swapped" ${s.chatDimensionOrder === 'swapped' ? 'selected' : ''}>Reversed proxy — height × width</option></select>`, 'Use Reversed proxy when Request Debug says width and height were swapped. Auto learns this after one exact mismatch and corrects future generations without an automatic paid retry.')}
       ${field('Steps', `<input id="ng-steps" class="text_pole" type="number" min="1" max="100" value="${s.image.steps}">`)}
       ${field('Guidance', `<input id="ng-guidance" class="text_pole" type="number" min="0" max="30" step="0.1" value="${s.image.guidance}">`)}
       ${field('Sampler', `<select id="ng-sampler" class="text_pole"><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_euler">Euler</option><option value="k_dpmpp_sde">DPM++ SDE</option></select>`)}
@@ -280,6 +285,10 @@ function bindSettings() {
   bind('ng-format', el => s.responseFormat = el.value, 'change');
   bind('ng-compat', el => s.compatibility = el.value, 'change');
   bind('ng-route', el => s.routeMode = el.value, 'change');
+  bind('ng-chat-dimension-order', el => {
+    s.chatDimensionOrder = ['auto', 'standard', 'swapped'].includes(el.value) ? el.value : 'auto';
+    s.chatDimensionCorrectionLearned = false;
+  }, 'change');
   bind('ng-model', el => s.model = el.value, 'change');
   bind('ng-timeout', el => s.timeoutMs = +el.value || 120000);
   bind('ng-steps', el => s.image.steps = +el.value || 28);
@@ -1277,9 +1286,7 @@ function routeCandidates() {
   return ['images', 'chat'];
 }
 
-function chatPayloadFrom(payload, state) {
-  const width = Math.max(64, Math.round(Number(state.width) || 832));
-  const height = Math.max(64, Math.round(Number(state.height) || 1216));
+function ngRatioLabel(width, height) {
   const divisor = (left, right) => {
     let a = Math.abs(left);
     let b = Math.abs(right);
@@ -1296,6 +1303,27 @@ function chatPayloadFrom(payload, state) {
   const aspectRatio = Math.abs(closest[1] - exactRatio) / exactRatio <= 0.04
     ? closest[0]
     : `${width / ratioDivisor}:${height / ratioDivisor}`;
+  return aspectRatio;
+}
+
+function ngChatDimensionTransport(state) {
+  const requested = {
+    width: Math.max(64, Math.round(Number(state.width) || 832)),
+    height: Math.max(64, Math.round(Number(state.height) || 1216)),
+  };
+  const s = settings();
+  const swapped = s.chatDimensionOrder === 'swapped'
+    || (s.chatDimensionOrder === 'auto' && s.chatDimensionCorrectionLearned);
+  const sent = swapped
+    ? { width: requested.height, height: requested.width }
+    : { ...requested };
+  return { requested, sent, swapped, mode: s.chatDimensionOrder };
+}
+
+function chatPayloadFrom(payload, state) {
+  const transport = ngChatDimensionTransport(state);
+  const { width, height } = transport.sent;
+  const aspectRatio = ngRatioLabel(width, height);
   const imageConfig = {
     // Chat image APIs (including OpenRouter-compatible wrappers) read image
     // controls from top-level `image_config`, not only from a custom nested
@@ -1318,6 +1346,7 @@ function chatPayloadFrom(payload, state) {
       height,
       aspect_ratio: aspectRatio,
       image_config: imageConfig,
+      parameters: payload.parameters ? { ...payload.parameters, width, height } : undefined,
     }),
   };
 }
@@ -2176,13 +2205,25 @@ async function ngVerifyGeneratedDimensions(images, state, route, schema) {
 
   const orientation = value => value.width === value.height ? 'square' : value.width > value.height ? 'horizontal' : 'vertical';
   const reversed = mismatch.width === requested.height && mismatch.height === requested.width;
-  const warning = `the provider returned ${mismatch.width}×${mismatch.height} (${orientation(mismatch)}) instead of ${requested.width}×${requested.height} (${orientation(requested)}). ${reversed ? 'It swapped width and height.' : 'It ignored or changed the requested size.'} Check Request Debug; the extension sent both exact pixels and aspect ratio.`;
+  const transport = route === 'chat' ? ngChatDimensionTransport(state) : { requested, sent: requested, swapped: false, mode: 'standard' };
+  let correction = '';
+  if (route === 'chat' && reversed && transport.mode === 'auto' && !transport.swapped) {
+    const s = settings();
+    s.chatDimensionCorrectionLearned = true;
+    save();
+    correction = ' Automatic reversed-proxy correction is now learned; press Generate again and the transport dimensions will be swapped without an extra automatic paid retry.';
+  } else if (route === 'chat' && reversed && transport.mode === 'standard') {
+    correction = ' Select “Reversed proxy — height × width” under Image Parameters before generating again.';
+  } else if (route === 'chat' && reversed && transport.swapped) {
+    correction = ' Reversed-proxy correction was already active, so this provider is ignoring every supported size field.';
+  }
+  const warning = `the provider returned ${mismatch.width}×${mismatch.height} (${orientation(mismatch)}) instead of ${requested.width}×${requested.height} (${orientation(requested)}). ${reversed ? 'It swapped width and height.' : 'It ignored or changed the requested size.'}${correction} Check Request Debug for the requested and transported sizes.`;
   debugAttempt({
     route,
     schema: `${schema}-dimension-check`,
     status: 200,
-    payload: { requested },
-    response: { returned: dimensions, reversed },
+    payload: { requested, transported: transport.sent, correction_mode: transport.mode, correction_active: transport.swapped },
+    response: { returned: dimensions, reversed, correction_learned: Boolean(correction) && transport.mode === 'auto' },
     size_mismatch: true,
   });
   toast('warning', warning);
@@ -5288,7 +5329,7 @@ ngV068TrimGallery();
 
 
 /* ===== Consolidated runtime section 19: AI Prompt Helper output modes ===== */
-// Novel Generation v0.7.1 — text ideas can become pure tags, a natural-language
+// Novel Generation v0.7.2 — text ideas can become pure tags, a natural-language
 // prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
 var NG_V070_RELEASE = VERSION;
 
