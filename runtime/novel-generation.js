@@ -1,7 +1,7 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.5';
+const VERSION = '0.7.6';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -1378,12 +1378,52 @@ function routeCandidates() {
   return ['images', 'chat'];
 }
 
+function ngAspectRatioLabel(width, height) {
+  const divisor = (left, right) => {
+    let a = Math.abs(Math.round(left));
+    let b = Math.abs(Math.round(right));
+    while (b) [a, b] = [b, a % b];
+    return a || 1;
+  };
+  const ratioDivisor = divisor(width, height);
+  const exact = width / height;
+  const common = [
+    ['1:1', 1], ['2:3', 2 / 3], ['3:2', 3 / 2], ['3:4', 3 / 4], ['4:3', 4 / 3],
+    ['9:16', 9 / 16], ['16:9', 16 / 9], ['4:5', 4 / 5], ['5:4', 5 / 4],
+  ];
+  const closest = common.reduce((best, item) => Math.abs(item[1] - exact) < Math.abs(best[1] - exact) ? item : best);
+  return Math.abs(closest[1] - exact) / exact <= 0.04
+    ? closest[0]
+    : `${width / ratioDivisor}:${height / ratioDivisor}`;
+}
+
 function chatPayloadFrom(payload, state) {
+  const canvas = ngResolveCanvasSize(state);
+  const imageConfig = {
+    size: `${canvas.width}x${canvas.height}`,
+    aspect_ratio: ngAspectRatioLabel(canvas.width, canvas.height),
+    width: canvas.width,
+    height: canvas.height,
+  };
   return {
     model: payload.model,
     messages: [{ role: 'user', content: state.prompt.trim() }],
     modalities: ['text', 'image'],
-    image_generation: payload,
+    // Chat-completion image wrappers commonly read canvas controls here rather
+    // than from a provider-specific nested envelope. These are the same values,
+    // never reversed: Portrait remains 832 x 1216 at every layer.
+    image_config: imageConfig,
+    image_generation: cleanObject({
+      ...payload,
+      size: imageConfig.size,
+      width: imageConfig.width,
+      height: imageConfig.height,
+      aspect_ratio: imageConfig.aspect_ratio,
+      image_config: imageConfig,
+      parameters: payload.parameters
+        ? { ...payload.parameters, width: imageConfig.width, height: imageConfig.height }
+        : undefined,
+    }),
   };
 }
 
@@ -5319,7 +5359,7 @@ ngV068TrimGallery();
 
 
 /* ===== Consolidated runtime section 19: AI Prompt Helper output modes ===== */
-// Novel Generation v0.7.5 — text ideas can become pure tags, a natural-language
+// Novel Generation v0.7.6 — text ideas can become pure tags, a natural-language
 // prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
 var NG_V070_RELEASE = VERSION;
 
