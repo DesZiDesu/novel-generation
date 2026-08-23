@@ -1,12 +1,12 @@
 
 /* ===== Consolidated runtime section 01: runtime/parts/v030-01.js ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.4';
+const VERSION = '0.7.5';
 
 const SIZES = {
-  portrait: [832, 1216, 'Portrait'],
+  portrait: [832, 1216, 'Vertical / Portrait'],
   square: [1024, 1024, 'Square'],
-  landscape: [1216, 832, 'Horizontal'],
+  landscape: [1216, 832, 'Horizontal / Landscape'],
 };
 
 const NAI_DIRECT_BASE_URL = 'https://image.novelai.net';
@@ -69,6 +69,52 @@ const clone = value => typeof structuredClone === 'function'
   ? structuredClone(value)
   : JSON.parse(JSON.stringify(value));
 
+function ngCanvasOrientation(width, height) {
+  if (width === height) return 'square';
+  return width < height ? 'vertical' : 'horizontal';
+}
+
+function ngResolveCanvasSize(image) {
+  const original = {
+    preset: String(image?.preset || 'custom'),
+    width: Number(image?.width),
+    height: Number(image?.height),
+  };
+  const canonical = SIZES[original.preset];
+  const width = canonical
+    ? canonical[0]
+    : Math.max(64, Math.round(Number.isFinite(original.width) ? original.width : DEFAULTS.image.width));
+  const height = canonical
+    ? canonical[1]
+    : Math.max(64, Math.round(Number.isFinite(original.height) ? original.height : DEFAULTS.image.height));
+  return {
+    preset: canonical ? original.preset : 'custom',
+    width,
+    height,
+    orientation: ngCanvasOrientation(width, height),
+    corrected: original.preset !== (canonical ? original.preset : 'custom')
+      || original.width !== width
+      || original.height !== height,
+    original,
+  };
+}
+
+function ngApplyCanvasSize(image) {
+  if (!image || typeof image !== 'object') return null;
+  const resolved = ngResolveCanvasSize(image);
+  image.preset = resolved.preset;
+  image.width = resolved.width;
+  image.height = resolved.height;
+  return resolved;
+}
+
+function ngUpdateCanvasStatus(prefix, image) {
+  const node = document.querySelector(`[data-ng-size-status="${prefix}"]`);
+  if (!node || !image) return;
+  const resolved = ngResolveCanvasSize(image);
+  node.textContent = `Canvas sent to the image model: ${resolved.width} × ${resolved.height} · ${resolved.orientation}`;
+}
+
 function settings() {
   const c = ctx();
   c.extensionSettings[EXT] ??= clone(DEFAULTS);
@@ -79,6 +125,10 @@ function settings() {
   for (const [key, value] of Object.entries(DEFAULTS)) if (!(key in s)) s[key] = clone(value);
   for (const [key, value] of Object.entries(DEFAULTS.image)) if (!(key in s.image)) s.image[key] = clone(value);
   for (const [key, value] of Object.entries(DEFAULTS.roleplay)) if (!(key in s.roleplay)) s.roleplay[key] = clone(value);
+  // A few older builds could persist a preset name and the dimensions from a
+  // different preset. Make the visible fixed preset authoritative so Portrait
+  // can never silently leave a stale 1216 × 832 landscape canvas behind.
+  ngApplyCanvasSize(s.image);
   if (typeof s.apiKey !== 'string') s.apiKey = '';
   if (typeof s.proxyBaseUrl !== 'string') s.proxyBaseUrl = s.provider === 'proxy' ? s.baseUrl : '';
   if (typeof s.proxyApiKey !== 'string') s.proxyApiKey = s.provider === 'proxy' ? s.apiKey : '';
@@ -122,7 +172,8 @@ function section(id, icon, title, subtitle, body) {
 }
 
 function sizePicker(prefix, image) {
-  const preset = image.preset || 'portrait';
+  const resolved = ngResolveCanvasSize(image);
+  const preset = resolved.preset;
   const buttons = Object.entries(SIZES).map(([key, [width, height, label]]) => `
     <button type="button" class="menu_button ng-size-choice ${preset === key ? 'is-active' : ''}" data-ng-size="${key}">
       <i class="fa-solid ${key === 'portrait' ? 'fa-mobile-screen' : key === 'square' ? 'fa-square' : 'fa-panorama'}"></i>
@@ -137,7 +188,8 @@ function sizePicker(prefix, image) {
   <div class="ng-custom-size ${preset === 'custom' ? 'is-visible' : ''}" data-ng-custom="${prefix}">
     ${field('Width', `<input id="${prefix}-width" class="text_pole" type="number" min="64" step="64" value="${Number(image.width) || 832}">`)}
     ${field('Height', `<input id="${prefix}-height" class="text_pole" type="number" min="64" step="64" value="${Number(image.height) || 1216}">`)}
-  </div>`;
+  </div>
+  <small class="ng-help ng-canvas-size-status" data-ng-size-status="${prefix}">Canvas sent to the image model: ${resolved.width} × ${resolved.height} · ${resolved.orientation}</small>`;
 }
 
 function settingsHtml() {
@@ -296,8 +348,8 @@ function bindSettings() {
   bind('ng-rp-gallery', el => s.roleplay.gallery = el.checked, 'change');
   bind('ng-rp-insert', el => s.roleplay.autoInsert = el.checked, 'change');
   bind('ng-insert-target', el => s.autoInsertTarget = el.value, 'change');
-  bind('ng-width', el => { s.image.width = +el.value || 832; s.image.preset = 'custom'; });
-  bind('ng-height', el => { s.image.height = +el.value || 1216; s.image.preset = 'custom'; });
+  bind('ng-width', el => { s.image.width = +el.value || 832; s.image.preset = 'custom'; ngUpdateCanvasStatus('ng', s.image); });
+  bind('ng-height', el => { s.image.height = +el.value || 1216; s.image.preset = 'custom'; ngUpdateCanvasStatus('ng', s.image); });
 
   document.getElementById('ng-api-key')?.addEventListener('input', e => {
     const s = settings();
@@ -340,6 +392,7 @@ function setSize(target, preset) {
   if (!data) return;
   data.preset = preset;
   if (SIZES[preset]) [data.width, data.height] = SIZES[preset];
+  ngApplyCanvasSize(data);
   if (target === 'settings') save();
   const root = target === 'settings' ? document.getElementById('ng-settings') : document.getElementById('ng-studio-overlay');
   root?.querySelectorAll('.ng-size-choice').forEach(btn => btn.classList.toggle('is-active', btn.dataset.ngSize === preset));
@@ -349,6 +402,7 @@ function setSize(target, preset) {
   const height = document.getElementById(`${prefix}-height`);
   if (width) width.value = data.width;
   if (height) height.value = data.height;
+  ngUpdateCanvasStatus(prefix, data);
 }
 
 function isDirectNovelAI() {
@@ -783,7 +837,13 @@ function bindStudio() {
   });
 
   [['ng-studio-steps', 'steps'], ['ng-studio-guidance', 'guidance'], ['ng-studio-seed', 'seed'], ['ng-studio-n', 'n'], ['ng-studio-width', 'width'], ['ng-studio-height', 'height']].forEach(([id, key]) => {
-    document.getElementById(id)?.addEventListener('input', event => { studio[key] = +event.currentTarget.value; });
+    document.getElementById(id)?.addEventListener('input', event => {
+      studio[key] = +event.currentTarget.value;
+      if (key === 'width' || key === 'height') {
+        studio.preset = 'custom';
+        ngUpdateCanvasStatus('ng-studio', studio);
+      }
+    });
   });
 
   const sampler = document.getElementById('ng-studio-sampler');
@@ -4967,6 +5027,23 @@ newStudio = function (mode, focus) {
 
 var ngV067BaseGenerateState = generateState;
 generateState = async function (state, label) {
+  const canvas = ngApplyCanvasSize(state);
+  if (canvas) {
+    debugAttempt({
+      route: 'preflight',
+      schema: 'resolved-canvas-size',
+      status: 0,
+      payload: {
+        preset: canvas.preset,
+        width: canvas.width,
+        height: canvas.height,
+        orientation: canvas.orientation,
+      },
+      response: canvas.corrected
+        ? { corrected_stale_values: canvas.original }
+        : { corrected_stale_values: false },
+    });
+  }
   var originalPrompt = state?.prompt;
   if (state && typeof originalPrompt === 'string') {
     var enabled = state.artistMixEnabled !== false && ngV067ArtistPrefs().artistMixEnabled !== false;
@@ -5242,7 +5319,7 @@ ngV068TrimGallery();
 
 
 /* ===== Consolidated runtime section 19: AI Prompt Helper output modes ===== */
-// Novel Generation v0.7.4 — text ideas can become pure tags, a natural-language
+// Novel Generation v0.7.5 — text ideas can become pure tags, a natural-language
 // prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
 var NG_V070_RELEASE = VERSION;
 
