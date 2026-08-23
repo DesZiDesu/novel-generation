@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.8';
+const VERSION = '0.7.9';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -75,8 +75,23 @@ function ngCanvasOrientation(width, height) {
   return width < height ? 'vertical' : 'horizontal';
 }
 
-function ngImageSizeValue(model, width, height) {
-  const separator = /nai-diffusion-5(?:-|$)/i.test(String(model || '')) ? ':' : 'x';
+function ngUsesCompactChatImageRoute(model) {
+  const value = String(model || '').trim();
+  return ngIsRvlProxy()
+    && !/^\[备用\]/.test(value)
+    && /nai-diffusion-(?:5|4-5)(?:-|$)/i.test(value);
+}
+
+function ngUsesBackupImagesRoute(model) {
+  return ngIsRvlProxy() && /^\[备用\]/.test(String(model || '').trim());
+}
+
+function ngIsRvlProxy() {
+  return /^https?:\/\/(?:www\.)?rvlconnect\.com(?:\/|$)/i.test(base());
+}
+
+function ngImageSizeValue(model, width, height, route = 'images') {
+  const separator = route === 'chat' && ngUsesCompactChatImageRoute(model) ? ':' : 'x';
   return `${Math.round(width)}${separator}${Math.round(height)}`;
 }
 
@@ -1378,9 +1393,14 @@ function requestCandidates(state) {
 }
 
 function routeCandidates() {
-  const mode = settings().routeMode;
+  const s = settings();
+  const mode = s.routeMode;
   if (mode === 'images') return ['images'];
   if (mode === 'chat') return ['chat'];
+  // RVL's normal NAI V5/V4.5 models use the compact chat-completions schema.
+  // Only the model explicitly marked [备用] uses images/generations.
+  if (ngUsesCompactChatImageRoute(s.model)) return ['chat'];
+  if (ngUsesBackupImagesRoute(s.model)) return ['images'];
   return ['images', 'chat'];
 }
 
@@ -1405,20 +1425,35 @@ function ngAspectRatioLabel(width, height) {
 
 function chatPayloadFrom(payload, state) {
   const canvas = ngResolveCanvasSize(state);
+  const model = payload.model || settings().model;
   const imageConfig = {
-    size: ngImageSizeValue(payload.model || settings().model, canvas.width, canvas.height),
+    size: ngImageSizeValue(model, canvas.width, canvas.height, 'chat'),
     aspect_ratio: ngAspectRatioLabel(canvas.width, canvas.height),
     width: canvas.width,
     height: canvas.height,
   };
+  if (ngUsesCompactChatImageRoute(model)) {
+    const negative = state.negative?.trim();
+    const content = negative
+      ? `${state.prompt.trim()}\n\nNegative prompt: ${negative}`
+      : state.prompt.trim();
+    return cleanObject({
+      model,
+      messages: [{ role: 'user', content }],
+      max_tokens: 16,
+      size: imageConfig.size,
+      width: imageConfig.width,
+      height: imageConfig.height,
+      seed: Number(state.seed),
+    });
+  }
   return {
-    model: payload.model,
+    model,
     messages: [{ role: 'user', content: state.prompt.trim() }],
     modalities: ['text', 'image'],
     // Chat-completion image wrappers commonly read canvas controls here rather
     // than from a provider-specific nested envelope. These are the same values,
-    // never reversed: Portrait remains 832 by 1216 at every layer. NAI V5
-    // wrappers receive `832:1216`; V4.5 and other models retain `832x1216`.
+    // never reversed: Portrait remains 832 by 1216 at every layer.
     image_config: imageConfig,
     image_generation: cleanObject({
       ...payload,
@@ -5366,7 +5401,7 @@ ngV068TrimGallery();
 
 
 /* ===== Runtime 19: AI Prompt Helper output modes ===== */
-// Novel Generation v0.7.8 — text ideas can become pure tags, a natural-language
+// Novel Generation v0.7.9 — text ideas can become pure tags, a natural-language
 // prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
 var NG_V070_RELEASE = VERSION;
 
