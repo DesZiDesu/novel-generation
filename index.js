@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.10';
+const VERSION = '0.7.11';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -107,6 +107,17 @@ function ngRvlChatSeed(state) {
   const generated = Math.floor(Math.random() * 900000) + 100000;
   if (state && typeof state === 'object') ngRvlRequestSeeds.set(state, generated);
   return generated;
+}
+
+function ngRvlFallbackModel(model, status, responseText) {
+  const value = String(model || '').trim();
+  if (!ngIsRvlProxy() || !/nai-diffusion-5(?:-|$)/i.test(value)) return '';
+  const failure = `${status} ${String(responseText || '')}`;
+  return status === 502
+    || status === 530
+    || /Cloudflare Tunnel|unable to reach|bad_response_status_code|暂时无法连接图像服务|请稍后重试/i.test(failure)
+    ? 'nai-diffusion-4-5-full'
+    : '';
 }
 
 function ngResolveCanvasSize(image) {
@@ -1354,6 +1365,9 @@ function naiParameters(state) {
 function requestCandidates(state) {
   const s = settings();
   const strict = strictPayload(state);
+  if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
+    return [{ name: 'rvl-compact-chat', payload: strict }];
+  }
   if (s.compatibility === 'strict') {
     if (hasAdvancedReferences(state) || state.source) {
       throw new Error('Strict OpenAI payload mode cannot carry Vibe, Precise Reference, img2img or inpaint fields. Switch Payload mode to Auto / NovelAI-aware.');
@@ -1535,6 +1549,16 @@ async function postGeneration(route, candidate, state, signal) {
     response: safePayloadForDebug(data),
   });
   if (!response.ok) {
+    const fallbackModel = !candidate.rvlFallback
+      ? ngRvlFallbackModel(body.model, response.status, raw)
+      : '';
+    if (route === 'chat' && fallbackModel) {
+      return postGeneration(route, {
+        name: 'rvl-v4.5-fallback',
+        rvlFallback: true,
+        payload: { ...candidate.payload, model: fallbackModel },
+      }, state, signal);
+    }
     throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
   }
   const images = extractImages(data);
@@ -2092,6 +2116,9 @@ function ngBuildOpenAiWithNativeParameters(state) {
 function requestCandidates(state) {
   const s = settings();
   const strict = strictPayload(state);
+  if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
+    return [{ name: 'rvl-compact-chat', payload: strict }];
+  }
   if (s.compatibility === 'strict') {
     if (hasAdvancedReferences(state) || state.source) {
       throw new Error('Strict OpenAI payload mode cannot carry Vibe, Precise Reference, img2img or inpaint fields. Switch Payload mode to Auto / NovelAI-aware.');
@@ -2329,7 +2356,19 @@ async function postGeneration(route, candidate, state, signal) {
     response: safePayloadForDebug(data),
     reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable',
   });
-  if (!response.ok) throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
+  if (!response.ok) {
+    const fallbackModel = !candidate.rvlFallback
+      ? ngRvlFallbackModel(body.model, response.status, raw)
+      : '';
+    if (route === 'chat' && fallbackModel) {
+      return postGeneration(route, {
+        name: 'rvl-v4.5-fallback',
+        rvlFallback: true,
+        payload: { ...candidate.payload, model: fallbackModel },
+      }, state, signal);
+    }
+    throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
+  }
   const images = extractImages(data);
   if (!images.length) throw Object.assign(new Error('Provider returned success but no image URL/base64 was found in the response.'), { status: 200 });
   return { images, data, schema: candidate.name, route, referenceVerified: false };
@@ -5417,7 +5456,7 @@ ngV068TrimGallery();
 
 
 /* ===== Runtime 19: AI Prompt Helper output modes ===== */
-// Novel Generation v0.7.10 — text ideas can become pure tags, a natural-language
+// Novel Generation v0.7.11 — text ideas can become pure tags, a natural-language
 // prompt, or a V5-friendly hybrid while image analysis keeps its own preset.
 var NG_V070_RELEASE = VERSION;
 
