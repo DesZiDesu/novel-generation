@@ -1077,10 +1077,15 @@ function initializeMaskCanvas(img) {
   const canvas = document.getElementById('ng-mask-canvas');
   if (!canvas || !img.naturalWidth || !img.naturalHeight) return;
   const sourceId = studio?.source?.id || studio?.source?.url || '';
-  if (canvas.dataset.ngSourceId === sourceId && canvas.width === img.naturalWidth && canvas.height === img.naturalHeight) return;
+  // Keep the interactive mask small on mobile. Request preparation scales
+  // source and mask together to the final canvas dimensions.
+  const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+  const width = Math.max(1, Math.round(img.naturalWidth * scale));
+  const height = Math.max(1, Math.round(img.naturalHeight * scale));
+  if (canvas.dataset.ngSourceId === sourceId && canvas.width === width && canvas.height === height) return;
   canvas.dataset.ngSourceId = sourceId;
-  canvas.width = img.naturalWidth;
-  canvas.height = img.naturalHeight;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext('2d');
   context.save();
   context.globalCompositeOperation = 'source-over';
