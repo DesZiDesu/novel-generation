@@ -68,6 +68,11 @@ Equal emphasis values do not guarantee an equal-looking style blend. Artist tags
 
 ## Proxy response compatibility
 
+- Advanced API probing reports **API route detected; feature unverified** until a real request succeeds. HTML pages, generic web responses, and HTTP 405 are not evidence of a usable POST API. Request Debug records each probe's URL, status, content type, and a short response excerpt.
+- **Precise Reference requires V4.5**, including when using a proxy. A NAI V5 model cannot gain this feature by changing its Base URL. References are fitted with padding to `1024×1536`, `1472×1472`, or `1536×1024` before native Director Reference fields are sent. See [NovelAI's Precise Reference documentation](https://docs.novelai.net/en/image/precisereference/).
+- **Inpaint requires native mask support from the provider.** V5 Full has an inpainting model, but a proxy that generates images through chat completions may not expose it. An OpenAI image wrapper must forward `action: infill`, `image`, `mask`, and the native parameters. An image response alone cannot prove that a proxy applied those fields.
+- The editing source and mask are converted to PNG at the selected canvas dimensions together. Mask strokes survive reopening the editor, a new source clears its old mask, and an empty mask is rejected. Inpaint Strength is sent through `inpaintImg2ImgStrength`; random seeds become valid unsigned integers while the UI keeps its random setting.
+
 - Chat-completion image proxies may return the generated image directly in `choices[].message.content` as a `data:image/...;base64,...` URL. Novel Generation recognizes this response and stops fallback attempts as soon as the image is found.
 - In Auto route mode, a missing `/v1/images/generations` endpoint is remembered for the current page session. The extension tries `/v1/chat/completions` immediately instead of repeating the same request with every image payload schema.
 - Ordinary generation now sends the complete model-specific NovelAI JSON envelope first. V4/V4.5 use `params_version: 3`; V5 uses `params_version: 4` with the V5 preset identifiers. Width, height, prompt structures, negative prompt, sampler, schedule, seed, and character data live together inside `parameters` while the compatible OpenAI fields remain at the wrapper level.

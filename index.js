@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.13';
+const VERSION = '0.7.14';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -377,11 +377,13 @@ function bindSettings() {
   bind('ng-base-url', el => {
     s.baseUrl = el.value.trim();
     if (s.provider === 'proxy') s.proxyBaseUrl = s.baseUrl;
+    ngProviderCaps.checked = false;
+    unavailableAutoRoutes.clear();
   });
   bind('ng-format', el => s.responseFormat = el.value, 'change');
   bind('ng-compat', el => s.compatibility = el.value, 'change');
   bind('ng-route', el => s.routeMode = el.value, 'change');
-  bind('ng-model', el => s.model = el.value, 'change');
+  bind('ng-model', el => { s.model = el.value; refreshReferenceLocks(); }, 'change');
   bind('ng-timeout', el => s.timeoutMs = +el.value || 120000);
   bind('ng-steps', el => s.image.steps = +el.value || 28);
   bind('ng-guidance', el => s.image.guidance = +el.value || 5);
@@ -401,6 +403,8 @@ function bindSettings() {
   document.getElementById('ng-api-key')?.addEventListener('input', e => {
     const s = settings();
     apiKey = e.currentTarget.value;
+    ngProviderCaps.checked = false;
+    unavailableAutoRoutes.clear();
     if (s.provider === 'proxy') {
       s.proxyApiKey = apiKey;
       s.apiKey = apiKey;
@@ -986,12 +990,13 @@ function refreshReferenceLocks() {
   if (!studio) return;
   const vibeInput = document.getElementById('ng-vibe-file');
   const preciseInput = document.getElementById('ng-precise-file');
+  const preciseModel = /4[-_. ]?5/i.test(String(settings().model));
   if (vibeInput) vibeInput.disabled = studio.precise.length > 0;
-  if (preciseInput) preciseInput.disabled = studio.vibes.length > 0;
+  if (preciseInput) preciseInput.disabled = studio.vibes.length > 0 || !preciseModel;
   const vibeNote = document.getElementById('ng-vibe-lock');
   const preciseNote = document.getElementById('ng-precise-lock');
   if (vibeNote) vibeNote.textContent = studio.precise.length ? 'Disabled while Precise Reference is active.' : 'V4/V4.5 uses native reference_image_multiple arrays when the proxy accepts them.';
-  if (preciseNote) preciseNote.textContent = studio.vibes.length ? 'Disabled while Vibe Transfer is active.' : 'V4.5 Director Reference uses Character / Style / Character & Style plus Strength and Fidelity.';
+  if (preciseNote) preciseNote.textContent = !preciseModel ? 'Precise Reference requires NAI V4.5. Select a V4.5 model; NAI V5 does not support this feature.' : studio.vibes.length ? 'Disabled while Vibe Transfer is active.' : 'V4.5 Director Reference uses Character / Style / Character & Style plus Strength and Fidelity. The provider must forward these fields.';
 }
 
 function renderRefs(kind) {
@@ -1043,6 +1048,7 @@ function renderCharacters() {
 
 function setStudioSource(ref) {
   if (!studio || !ref) return;
+  if (studio.source !== ref) studio.mask = null;
   studio.source = ref;
   const sourceCard = document.getElementById('ng-source-card');
   const upscaleCard = document.getElementById('ng-upscale-source');
@@ -1058,6 +1064,8 @@ function refreshMaskEditor() {
   const active = studio.editMode === 'inpaint' && studio.source;
   editor.hidden = !active;
   if (!active) return;
+  const help = editor.querySelector('.ng-help');
+  if (help) help.textContent = 'Paint white over the area to regenerate. Source and mask use the selected Canvas size together. The provider must support native inpainting masks.';
   const img = document.getElementById('ng-mask-source');
   if (!img) return;
   img.onload = () => initializeMaskCanvas(img);
@@ -1068,10 +1076,11 @@ function refreshMaskEditor() {
 function initializeMaskCanvas(img) {
   const canvas = document.getElementById('ng-mask-canvas');
   if (!canvas || !img.naturalWidth || !img.naturalHeight) return;
-  const maxSide = 1600;
-  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
-  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const sourceId = studio?.source?.id || studio?.source?.url || '';
+  if (canvas.dataset.ngSourceId === sourceId && canvas.width === img.naturalWidth && canvas.height === img.naturalHeight) return;
+  canvas.dataset.ngSourceId = sourceId;
+  canvas.width = img.naturalWidth;
+  canvas.height = img.naturalHeight;
   const context = canvas.getContext('2d');
   context.save();
   context.globalCompositeOperation = 'source-over';
@@ -1142,6 +1151,16 @@ function updateMaskFromCanvas() {
   const canvas = document.getElementById('ng-mask-canvas');
   if (!canvas || !studio) return;
   try {
+    if (canvas.dataset.ngSourceId !== (studio.source?.id || studio.source?.url || '')) {
+      studio.mask = null;
+      return;
+    }
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let painted = false;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i] > 0 && pixels[i + 3] > 0) { painted = true; break; }
+    }
+    if (!painted) { studio.mask = null; return; }
     const url = canvas.toDataURL('image/png');
     studio.mask = { id: `mask-${Date.now()}`, name: 'mask.png', url, base64: url.split(',')[1] || '' };
   } catch (error) {
@@ -1157,6 +1176,90 @@ function hasAdvancedReferences(state) {
 
 function imageValue(ref) {
   return ref?.base64 || ref?.url || '';
+}
+
+const ngPreparedImageCache = new WeakMap();
+
+function ngLoadInputImage(ref, signal) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const value = imageValue(ref);
+    const url = ref?.url?.startsWith('data:image/') ? ref.url
+      : /^(?:https?:|blob:|data:)/i.test(value) ? value : `data:image/png;base64,${value}`;
+    const finish = (error) => {
+      image.onload = image.onerror = null;
+      signal?.removeEventListener('abort', abort);
+      if (error) reject(error); else resolve(image);
+    };
+    const abort = () => { finish(new DOMException('Aborted', 'AbortError')); image.src = ''; };
+    if (signal?.aborted) { abort(); return; }
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error(`Cannot read ${ref?.name || 'input image'}. Upload it from your device if its host blocks access.`));
+    signal?.addEventListener('abort', abort, { once: true });
+    if (/^https?:/i.test(url)) image.crossOrigin = 'anonymous';
+    image.src = url;
+  });
+}
+
+async function ngPrepareInputImage(ref, kind, width, height, signal) {
+  const key = `${kind}:${width || 0}x${height || 0}:${imageValue(ref)}`;
+  const cached = ngPreparedImageCache.get(ref);
+  if (cached?.key === key) return cached.ref;
+  const image = await ngLoadInputImage(ref, signal);
+  if (kind === 'precise') {
+    const ratio = image.naturalWidth / image.naturalHeight;
+    [width, height] = ratio > 1.2 ? [1536, 1024] : ratio < 1 / 1.2 ? [1024, 1536] : [1472, 1472];
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('The browser cannot prepare input images.');
+  if (kind === 'mask' || kind === 'precise') {
+    context.fillStyle = kind === 'mask' ? '#000000' : '#ffffff';
+    context.fillRect(0, 0, width, height);
+  }
+  if (kind === 'precise') {
+    const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight);
+    const drawWidth = image.naturalWidth * scale;
+    const drawHeight = image.naturalHeight * scale;
+    context.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  } else {
+    context.imageSmoothingEnabled = kind !== 'mask';
+    context.drawImage(image, 0, 0, width, height);
+  }
+  let url;
+  try { url = canvas.toDataURL('image/png'); }
+  catch { throw new Error('The input image host blocks canvas access. Upload the image from your device.'); }
+  const prepared = { ...ref, url, base64: url.split(',')[1], width, height };
+  ngPreparedImageCache.set(ref, { key, ref: prepared });
+  return prepared;
+}
+
+async function ngPrepareAdvancedImages(state, signal) {
+  const prepared = { ...state };
+  if (state.precise?.length) {
+    prepared.precise = [];
+    for (const ref of state.precise) {
+      const image = await ngPrepareInputImage(ref, 'precise', 0, 0, signal);
+      // Controls remain live even when the prepared pixels are cached.
+      prepared.precise.push({ ...ref, url: image.url, base64: image.base64 });
+    }
+  }
+  if (state.source) {
+    prepared.source = await ngPrepareInputImage(state.source, 'source', state.width, state.height, signal);
+    if (naiAction(state) === 'infill') {
+      prepared.mask = await ngPrepareInputImage(state.mask, 'mask', state.width, state.height, signal);
+    }
+  }
+  return prepared;
+}
+
+function ngGenerationSeed(value) {
+  const selected = Number(value);
+  if (Number.isInteger(selected) && selected >= 0 && selected <= 0xffffffff) return selected;
+  const bytes = new Uint32Array(1);
+  return globalThis.crypto?.getRandomValues ? crypto.getRandomValues(bytes)[0] : Math.floor(Math.random() * 0x100000000);
 }
 
 function nativeReferenceFields(state) {
@@ -1321,7 +1424,7 @@ function naiParameters(state) {
     straight_alpha: isV5 ? false : undefined,
     use_coords: charCaptions.length > 0,
     normalize_reference_strength_multiple: true,
-    inpaintImg2ImgStrength: 1,
+    inpaintImg2ImgStrength: naiAction(state) === 'infill' ? Number(state.strength) : 1,
     legacy_uc: false,
     uc: negative,
     negative_prompt: negative,
@@ -1712,7 +1815,12 @@ async function generateStudio() {
     studio.generated = result.images;
     showImages(result.images);
     rememberImages(result.images, studio, { schema: result.schema, route: result.route });
-    if (out) out.textContent = `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'} using ${result.schema}.`;
+    if (out) {
+      out.textContent = `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'} using ${result.schema}.`;
+      if (!isDirectNovelAI() && (hasAdvancedReferences(studio) || studio.source)) {
+        out.textContent += ' The proxy has not confirmed that the source, mask or reference fields were applied.';
+      }
+    }
   } catch (error) {
     if (out) out.textContent = `Generation failed: ${error.message}`;
     toast('error', error.message);
@@ -1847,8 +1955,21 @@ const ngProviderCaps = {
   nativeGenerateUrl: '',
   encodeVibe: 'unknown',
   encodeVibeUrl: '',
+  nativeGenerateTested: false,
+  encodeVibeTested: false,
   checkedAt: '',
 };
+let ngCapabilitiesBase = '';
+let ngCapabilitiesKey = '';
+
+function ngCapabilitiesCurrent() {
+  return ngProviderCaps.checked && ngCapabilitiesBase === base() && ngCapabilitiesKey === apiKey;
+}
+
+function ngAdvancedCapabilityLabel(value, tested) {
+  if (value === 'supported') return tested ? 'Request succeeded' : 'API route detected; feature unverified';
+  return ngCapabilityLabel(value);
+}
 
 function ngCapabilityLabel(value) {
   if (value === 'direct') return 'Direct NovelAI API';
@@ -1871,8 +1992,9 @@ function ngRenderCapabilities() {
   }
   box.innerHTML = `<strong>Provider capabilities</strong><br>`
     + `Provider: ${esc(ngCapabilityLabel(ngProviderCaps.wrapper))}<br>`
-    + `NovelAI native generate: ${esc(ngCapabilityLabel(ngProviderCaps.nativeGenerate))}<br>`
-    + `V4/V4.5 vibe encoder: ${esc(ngCapabilityLabel(ngProviderCaps.encodeVibe))}`
+    + `NovelAI native generate: ${esc(ngAdvancedCapabilityLabel(ngProviderCaps.nativeGenerate, ngProviderCaps.nativeGenerateTested))}<br>`
+    + `V4/V4.5 vibe encoder: ${esc(ngAdvancedCapabilityLabel(ngProviderCaps.encodeVibe, ngProviderCaps.encodeVibeTested))}`
+    + '<br><small>Route discovery does not verify Inpaint or Precise Reference. Precise Reference requires V4.5 and a provider that forwards Director Reference fields.</small>'
     + (ngProviderCaps.checkedAt ? `<br><small>Checked ${esc(new Date(ngProviderCaps.checkedAt).toLocaleTimeString())}</small>` : '');
   box.classList.toggle('is-ok', (ngProviderCaps.wrapper === 'supported' || ngProviderCaps.wrapper === 'direct') && (ngProviderCaps.nativeGenerate === 'supported' || ngProviderCaps.encodeVibe === 'supported'));
   return true;
@@ -1906,6 +2028,7 @@ function ngProviderPathCandidates(path) {
 
 async function ngProbeAdvancedEndpoint(path) {
   let sawNetworkFailure = false;
+  const attempts = [];
   for (const url of ngProviderPathCandidates(path)) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6500);
@@ -1916,13 +2039,21 @@ async function ngProbeAdvancedEndpoint(path) {
         body: '{}',
         signal: controller.signal,
       });
-      response.body?.cancel?.().catch?.(() => {});
       const statusCode = response.status;
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      const raw = await response.text();
+      let data;
+      try { data = JSON.parse(raw); } catch { /* HTML and non-API responses are not route evidence. */ }
+      const jsonApi = data && typeof data === 'object' && !Array.isArray(data)
+        && !contentType.includes('text/html') && !/^\s*</.test(raw);
+      attempts.push({ url, status: statusCode, content_type: contentType, response: raw.slice(0, 250) });
       if (statusCode === 404) continue;
-      if (statusCode === 401 || statusCode === 403) return { state: 'blocked', url, status: statusCode };
-      if ([200, 400, 405, 415, 422].includes(statusCode)) return { state: 'supported', url, status: statusCode };
-      if (statusCode >= 500) continue;
-      return { state: 'supported', url, status: statusCode };
+      if (statusCode === 401 || statusCode === 403) return { state: 'blocked', url, status: statusCode, attempts };
+      if (jsonApi && [400, 415, 422].includes(statusCode)) return { state: 'supported', url, status: statusCode, attempts };
+      if (jsonApi && response.ok && (extractImages(data).length || data.encoded_vibe || data.encoded)) {
+        return { state: 'supported', url, status: statusCode, attempts };
+      }
+      if (statusCode >= 500 || statusCode === 429) sawNetworkFailure = true;
     } catch (error) {
       sawNetworkFailure = true;
       if (error?.name === 'AbortError') continue;
@@ -1930,10 +2061,15 @@ async function ngProbeAdvancedEndpoint(path) {
       clearTimeout(timer);
     }
   }
-  return { state: sawNetworkFailure ? 'unknown' : 'missing', url: '', status: 0 };
+  return { state: sawNetworkFailure ? 'unknown' : 'missing', url: '', status: 0, attempts };
 }
 
 async function ngProbeAdvancedCapabilities() {
+  const checkedBase = base();
+  const checkedKey = apiKey;
+  ngProviderCaps.checked = false;
+  ngProviderCaps.nativeGenerateTested = false;
+  ngProviderCaps.encodeVibeTested = false;
   ngProviderCaps.nativeGenerate = 'testing';
   ngProviderCaps.encodeVibe = 'testing';
   ngRenderCapabilities();
@@ -1941,11 +2077,14 @@ async function ngProbeAdvancedCapabilities() {
     ngProbeAdvancedEndpoint('/ai/generate-image'),
     ngProbeAdvancedEndpoint('/ai/encode-vibe'),
   ]);
+  if (checkedBase !== base() || checkedKey !== apiKey) return ngProviderCaps;
   ngProviderCaps.nativeGenerate = nativeGenerate.state;
   ngProviderCaps.nativeGenerateUrl = nativeGenerate.url;
   ngProviderCaps.encodeVibe = encodeVibe.state;
   ngProviderCaps.encodeVibeUrl = encodeVibe.url;
   ngProviderCaps.checked = true;
+  ngCapabilitiesBase = checkedBase;
+  ngCapabilitiesKey = checkedKey;
   ngProviderCaps.checkedAt = new Date().toISOString();
   ngRenderCapabilities();
   debugAttempt({
@@ -1965,6 +2104,8 @@ async function connectAndLoadModels() {
   const s = settings();
   if (!base()) return toast('warning', 'Enter a Base URL first.');
   if (!apiKey) return toast('warning', 'Enter an API key first.');
+  ngProviderCaps.checked = false;
+  unavailableAutoRoutes.clear();
   const button = document.getElementById('ng-connect');
   button?.setAttribute('disabled', 'disabled');
   status('Testing connection and loading models…', 'testing');
@@ -1994,11 +2135,11 @@ async function connectAndLoadModels() {
       }
       save();
       status(ngProviderCaps.encodeVibe === 'supported'
-        ? 'Connected directly to NovelAI. Native generation and Vibe Transfer are available.'
-        : 'Connected directly to NovelAI. Native generation is available; Vibe Transfer encoder was not confirmed.', 'ok');
+        ? 'Connected directly to NovelAI. Native generation and encoder routes detected; feature support depends on the selected model.'
+        : 'Connected directly to NovelAI. Native generation route detected; Vibe Transfer encoder was not confirmed.', 'ok');
       toast('success', ngProviderCaps.encodeVibe === 'supported'
-        ? 'Direct NovelAI connected with advanced image features.'
-        : 'Direct NovelAI connected. Vibe Transfer is unavailable on this endpoint.');
+        ? 'Direct NovelAI connected. Advanced API routes detected.'
+        : 'Direct NovelAI connected. Vibe Transfer encoder was not confirmed.');
       return;
     }
 
@@ -2316,9 +2457,11 @@ async function ngPostNativeGeneration(state, signal) {
     throw Object.assign(new Error(`Native NovelAI route failed: HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
   }
   const parsed = await ngNativeResponseImages(response);
-  debugAttempt({ route: 'native', schema: 'nai-native-route', status: response.status, ms: Math.round(performance.now() - started), payload: safePayloadForDebug(payload), response: parsed.debug, reference_consumption: hasAdvancedReferences(state) ? 'native-route' : 'not-applicable' });
+  debugAttempt({ route: 'native', schema: 'nai-native-route', status: response.status, ms: Math.round(performance.now() - started), payload: safePayloadForDebug(payload), response: parsed.debug, reference_consumption: hasAdvancedReferences(state) ? (isDirectNovelAI() ? 'native-route' : 'unverified-proxy-native') : 'not-applicable' });
   if (!parsed.images.length) throw Object.assign(new Error('Native NovelAI route returned success but no image could be decoded.'), { status: 200 });
-  return { images: parsed.images, data: parsed.debug, schema: 'nai-native-route', route: 'native', referenceVerified: hasAdvancedReferences(state) };
+  ngProviderCaps.nativeGenerateTested = true;
+  ngRenderCapabilities();
+  return { images: parsed.images, data: parsed.debug, schema: 'nai-native-route', route: 'native', referenceVerified: isDirectNovelAI() && hasAdvancedReferences(state) };
 }
 
 // OpenAI-wrapper success no longer fails because `usage.image_tokens` is zero.
@@ -2398,6 +2541,7 @@ async function generateState(state, label = 'Generating…') {
   if (state.precise?.length && !/4[-_. ]?5/i.test(String(s.model))) throw new Error('Precise Reference requires a NovelAI V4.5 model.');
   if (state.editMode === 'inpaint' && state.source && !state.mask) updateMaskFromCanvas();
   if (state.editMode === 'inpaint' && state.source && !state.mask) throw new Error('Paint an inpaint mask before generating.');
+  if (state.editMode === 'inpaint' && !state.source) throw new Error('Choose a source image before inpainting.');
 
   const controller = new AbortController();
   const rvlRequestCount = ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source
@@ -2410,7 +2554,9 @@ async function generateState(state, label = 'Generating…') {
       return await ngGenerateRvlExact(state, controller.signal);
     }
 
-    if (!ngProviderCaps.checked) {
+    state = await ngPrepareAdvancedImages({ ...state, seed: ngGenerationSeed(state.seed) }, controller.signal);
+
+    if (!ngCapabilitiesCurrent()) {
       try { await ngProbeAdvancedCapabilities(); } catch (error) { console.debug('[Novel Generation] capability probe before generation failed', error); }
     }
 
@@ -2474,6 +2620,9 @@ async function generateState(state, label = 'Generating…') {
 
   if (hasAdvancedReferences(state)) {
     throw new Error(`Advanced reference generation failed. Open Request Debug and send the newest attempts. Last error: ${failures.at(-1) || 'unknown'}`);
+  }
+  if (state.source) {
+    throw new Error(`Image editing requires a NovelAI native route or an image wrapper that forwards action, image and mask. A chat image route alone does not confirm Inpaint support. Last error: ${failures.at(-1) || 'no compatible editing route'}`);
   }
   throw new Error(failures.at(-1) || label);
 }
@@ -4670,6 +4819,9 @@ ngProviderPathCandidates = function (path) {
 };
 
 function ngConsolidatedReadVibeResponse(response, contentType) {
+  if (contentType.includes('text/html') || contentType.includes('text/plain')) {
+    throw new Error('The encoder returned a web page or text instead of an encoded Vibe vector.');
+  }
   if (contentType.includes('application/json') || contentType.includes('text/json')) {
     return response.json().then(function (data) {
       return {
@@ -4739,6 +4891,8 @@ async function ngConsolidatedEncodeVibeReference(ref, signal) {
         }
         ref.encodedVibe = parsed.encoded;
         ref.encodedVibeInformation = information;
+        ngProviderCaps.encodeVibeTested = true;
+        ngRenderCapabilities();
         debugAttempt({
           route: 'native-encode-vibe',
           schema: 'nai-encode-vibe',
@@ -4819,7 +4973,7 @@ requestCandidates = function (state) {
 var ngConsolidatedBaseGenerateState = generateState;
 generateState = async function (state, label) {
   if (state?.vibes?.length) {
-    if (!ngProviderCaps.checked) {
+    if (!ngCapabilitiesCurrent()) {
       try { await ngProbeAdvancedCapabilities(); } catch (error) {
         throw new Error('Vibe Transfer capability check failed: ' + (error?.message || error));
       }
