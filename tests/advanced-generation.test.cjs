@@ -164,3 +164,117 @@ test('fixed zero/max seeds are preserved and random seeds are unsigned', () => {
     assert.ok(Number.isInteger(seed) && seed >= 0 && seed <= 0xffffffff);
   }
 });
+
+test('XFX NAI sends negative prompt and selected controls in Parameter text', async () => {
+  const requests = [];
+  const api = runtime(async (url, options) => {
+    requests.push({ url, body: JSON.parse(options.body) });
+    return Response.json({ choices: [{ message: { content: 'data:image/png;base64,aGVsbG8=' } }] });
+  });
+  const input = state({ seed: 123456, negative: 'spiral eyes, @_@, hypnotic eyes', scheduler: 'karras' });
+  const result = await api.generateState(input);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].url, 'https://new.xfxai.top/v1/chat/completions');
+  const body = requests[0].body;
+  assert.deepEqual(Object.keys(body).sort(), ['messages', 'model']);
+  assert.equal(body.model, 'nai-diffusion-5-full');
+  assert.equal(body.messages[0].content,
+    'a cat Parameter{size:832:1216,negative_prompt:spiral eyes, @_@, hypnotic eyes,steps:28,scale:5,sampler:k_euler_ancestral,scheduler:karras,seed:123456,base64:true}');
+  assert.equal(result.schema, 'xfx-nai-chat-parameters');
+  assert.equal(input.negative, 'spiral eyes, @_@, hypnotic eyes');
+});
+
+test('XFX sends presets, additional negative text and Studio text together once', async () => {
+  let message;
+  const api = runtime(async (_url, options) => {
+    message = JSON.parse(options.body).messages[0].content;
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  Object.assign(api.settings().image, {
+    prefix: 'portrait', suffix: 'round pupils', negativePreset: 'human', defaultNegative: 'spiral eyes',
+  });
+  const input = state({ prompt: 'a girl', negative: 'hypnotic eyes' });
+  await api.generateState(input);
+  assert.match(message, /^portrait, a girl, round pupils Parameter\{/);
+  assert.match(message, /negative_prompt:lowres,.*@_@, mismatched pupils, glowing eyes, bad anatomy, spiral eyes, hypnotic eyes,steps:/);
+  assert.equal((message.match(/spiral eyes/g) || []).length, 1);
+  assert.equal(input.prompt, 'a girl');
+  assert.equal(input.negative, 'hypnotic eyes');
+});
+
+test('XFX batches are sequential and get a resolved seed for every image', async () => {
+  let pending = false;
+  const bodies = [];
+  const api = runtime(async (_url, options) => {
+    assert.equal(pending, false);
+    pending = true;
+    await Promise.resolve();
+    bodies.push(JSON.parse(options.body));
+    pending = false;
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  const input = state({ n: 3 });
+  const result = await api.generateState(input);
+  assert.equal(bodies.length, 3);
+  assert.equal(result.images.length, 3);
+  assert.equal(result.seeds.length, 3);
+  for (let index = 0; index < bodies.length; index++) {
+    const seed = result.seeds[index];
+    assert.ok(seed >= 100000 && seed <= 999999);
+    assert.ok(bodies[index].messages[0].content.includes(`seed:${seed},`));
+  }
+  assert.equal(input.seed, -1);
+});
+
+test('XFX fixed seeds are reused and native scheduler preserves the provider default', async () => {
+  const bodies = [];
+  const api = runtime(async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  await api.generateState(state({ seed: 123456, n: 2 }));
+  for (const body of bodies) {
+    assert.match(body.messages[0].content, /seed:123456,/);
+    assert.doesNotMatch(body.messages[0].content, /scheduler:/);
+    assert.doesNotMatch(body.messages[0].content, /negative_prompt:/);
+  }
+});
+
+test('XFX backup domain works but similarly named hosts keep their existing adapter', async () => {
+  for (const [baseUrl, xfx] of [
+    ['https://new.xfxaigc.com/v1', true],
+    ['https://new.xfxai.top.other.example/v1', false],
+    ['https://other.example/v1', false],
+  ]) {
+    const api = runtime(async () => Response.json({ data: [{ b64_json: 'aGVsbG8=' }] }));
+    api.settings().proxyBaseUrl = baseUrl;
+    const result = await api.generateState(state());
+    assert.equal(result.schema === 'xfx-nai-chat-parameters', xfx);
+  }
+});
+
+test('an XFX V5 error is surfaced without switching to V4.5 or repeating generation', async () => {
+  const requests = [];
+  const api = runtime(async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return Response.json({ error: 'upstream failed' }, { status: 503 });
+  });
+  await assert.rejects(api.generateState(state()), /503/);
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].model, 'nai-diffusion-5-full');
+});
+
+test('RVL keeps its compact request and Negative prompt block', async () => {
+  let body;
+  const api = runtime(async (_url, options) => {
+    body = JSON.parse(options.body);
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  api.settings().proxyBaseUrl = 'https://rvlconnect.com/17/v1';
+  await api.generateState(state({ seed: 123456, negative: 'spiral eyes' }));
+  assert.equal(body.messages[0].content, 'a cat\n\nNegative prompt: spiral eyes');
+  assert.equal(body.size, '832:1216');
+  assert.equal(body.seed, 123456);
+  assert.equal(body.max_tokens, 16);
+  assert.doesNotMatch(body.messages[0].content, /Parameter\{/);
+});

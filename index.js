@@ -100,6 +100,17 @@ function ngIsRvlProxy() {
   return /^https?:\/\/(?:www\.)?rvlconnect\.com(?:\/|$)/i.test(base());
 }
 
+function ngUsesXfxNaiChatRoute(model) {
+  return /^https?:\/\/(?:new\.xfxai\.top|new\.xfxaigc\.com)(?:\/|$)/i.test(base())
+    && !/^\[备用\]/.test(String(model || '').trim())
+    && /nai-diffusion(?:-|$)/i.test(String(model || ''));
+}
+
+function ngIsPlainImageState(state) {
+  return !hasAdvancedReferences(state) && !state.source
+    && !state.characters?.some(item => item.prompt?.trim());
+}
+
 function ngImageSizeValue(model, width, height, route = 'images') {
   const key = `${Math.round(width)}x${Math.round(height)}`;
   if (route === 'chat' && ngUsesCompactChatImageRoute(model)) {
@@ -1585,6 +1596,23 @@ function chatPayloadFrom(payload, state) {
       seed: ngRvlChatSeed(state),
     });
   }
+  if (ngUsesXfxNaiChatRoute(model) && ngIsPlainImageState(state)) {
+    // XFX's public client uses Parameter{...} in the user message. It does
+    // not send nested image_generation/parameters to its NAI chat route.
+    // Source: https://design.xfxaigc.com (Hr/Br chat request builders).
+    const controls = [`size:${canvas.width}:${canvas.height}`];
+    const negative = state.negative?.trim();
+    if (negative) controls.push(`negative_prompt:${negative}`);
+    controls.push(`steps:${Math.round(state.steps)}`, `scale:${Number(state.guidance)}`);
+    if (state.sampler) controls.push(`sampler:${state.sampler}`);
+    // "native" means use the provider's default, rather than overriding it.
+    if (state.scheduler && state.scheduler !== 'native') controls.push(`scheduler:${state.scheduler}`);
+    controls.push(`seed:${ngRvlChatSeed(state)}`, 'base64:true');
+    return {
+      model,
+      messages: [{ role: 'user', content: `${state.prompt.trim()} Parameter{${controls.join(',')}}` }],
+    };
+  }
   return {
     model,
     messages: [{ role: 'user', content: state.prompt.trim() }],
@@ -2535,6 +2563,22 @@ async function ngGenerateRvlExact(state, signal) {
   };
 }
 
+async function ngGenerateXfxNai(state, signal) {
+  const count = Math.max(1, Math.min(4, Math.round(Number(state.n) || 1)));
+  const images = [];
+  const seeds = [];
+  let lastResult;
+  for (let index = 0; index < count; index += 1) {
+    const requestState = { ...state, n: 1 };
+    lastResult = await postGeneration('chat', {
+      name: 'xfx-nai-chat-parameters', payload: { model: settings().model },
+    }, requestState, signal);
+    images.push(...lastResult.images.slice(0, 1));
+    seeds.push(ngRvlChatSeed(requestState));
+  }
+  return { ...lastResult, images, seeds };
+}
+
 async function generateState(state, label = 'Generating…') {
   ngRvlRequestSeeds.delete(state);
   const s = settings();
@@ -2549,14 +2593,18 @@ async function generateState(state, label = 'Generating…') {
   if (state.editMode === 'inpaint' && !state.source) throw new Error('Choose a source image before inpainting.');
 
   const controller = new AbortController();
-  const rvlRequestCount = ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source
+  const sequentialRequestCount = (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source)
+    || (ngUsesXfxNaiChatRoute(s.model) && ngIsPlainImageState(state))
     ? Math.max(1, Math.min(10, Math.round(Number(state.n) || 1)))
     : 1;
-  const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs) * rvlRequestCount);
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs) * sequentialRequestCount);
   const failures = [];
   try {
     if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
       return await ngGenerateRvlExact(state, controller.signal);
+    }
+    if (ngUsesXfxNaiChatRoute(s.model) && ngIsPlainImageState(state)) {
+      return await ngGenerateXfxNai(state, controller.signal);
     }
 
     state = await ngPrepareAdvancedImages({ ...state, seed: ngGenerationSeed(state.seed) }, controller.signal);
