@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.13';
+const VERSION = '0.8.0';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -35,7 +35,7 @@ const DEFAULTS = {
   apiKey: '',
   proxyBaseUrl: '',
   proxyApiKey: '',
-  model: 'nai-diffusion-4-5-full',
+  model: 'nai-diffusion-5-full',
   responseFormat: 'b64_json',
   compatibility: 'auto',
   routeMode: 'auto',
@@ -87,17 +87,46 @@ function ngCanvasOrientation(width, height) {
 
 function ngUsesCompactChatImageRoute(model) {
   const value = String(model || '').trim();
-  return ngIsRvlProxy()
+  const compactProxy = ngIsRvlProxy() || (ngIsRvlShop() && /^\[X\]/i.test(value)
+    && /nai-diffusion-4-5(?:-|$)/i.test(value) && !/\[(?:Bak|Img1)\]/i.test(value));
+  return compactProxy
     && !/^\[备用\]/.test(value)
     && /nai-diffusion-(?:5|4-5)(?:-|$)/i.test(value);
 }
 
 function ngUsesBackupImagesRoute(model) {
-  return ngIsRvlProxy() && /^\[备用\]/.test(String(model || '').trim());
+  return (ngIsRvlProxy() && /^\[备用\]/.test(String(model || '').trim()))
+    || (ngIsRvlShop() && /^\[X\]/i.test(String(model || '')) && /\[Bak\]/i.test(String(model || '')));
 }
 
 function ngIsRvlProxy() {
   return /^https?:\/\/(?:www\.)?rvlconnect\.com(?:\/|$)/i.test(base());
+}
+
+function ngUsesParameterChatImageRoute(model) {
+  const parameterProxy = /^https?:\/\/(?:new\.xfxai\.top|new\.xfxaigc\.com)(?:\/|$)/i.test(base())
+    || (ngIsRvlShop() && (/^\[MI\]/i.test(String(model || '')) || (/^\[X\]/i.test(String(model || ''))
+      && !/\[Bak\]/i.test(String(model || '')) && (/nai-diffusion-5(?:-|$)/i.test(String(model || '')) || /\[Img1\]/i.test(String(model || ''))))));
+  return parameterProxy
+    && !/^\[备用\]/.test(String(model || '').trim())
+    && /nai-diffusion(?:-|$)/i.test(String(model || ''));
+}
+
+function ngIsRvlShop() {
+  return /^https?:\/\/shop\.rvlconnect\.com(?:\/|$)/i.test(base());
+}
+
+function ngUsesShopNativeChat(model = settings().model) {
+  return ngIsRvlShop() && /^\[DM\]/i.test(model) && !/\[OAI\]/i.test(model) && ngIsNaiImageModel(model);
+}
+
+function ngUnavailableRouteKey(route) {
+  return `${base()}|${settings().model}|${route}`;
+}
+
+function ngIsPlainImageState(state) {
+  return !hasAdvancedReferences(state) && !state.source
+    && !state.characters?.some(item => item.prompt?.trim());
 }
 
 function ngImageSizeValue(model, width, height, route = 'images') {
@@ -160,6 +189,8 @@ function ngUpdateCanvasStatus(prefix, image) {
   if (!node || !image) return;
   const resolved = ngResolveCanvasSize(image);
   node.textContent = `Canvas sent to the image model: ${resolved.width} × ${resolved.height} · ${resolved.orientation}`;
+  const stage = prefix === 'ng-studio' && document.getElementById('ng-stage-size');
+  if (stage) stage.textContent = `${resolved.width} × ${resolved.height}`;
 }
 
 function settings() {
@@ -261,7 +292,7 @@ function settingsHtml() {
       ${field('Guidance', `<input id="ng-guidance" class="text_pole" type="number" min="0" max="30" step="0.1" value="${s.image.guidance}">`)}
       ${field('Sampler', `<select id="ng-sampler" class="text_pole"><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_euler">Euler</option><option value="k_dpmpp_sde">DPM++ SDE</option></select>`)}
       ${field('Scheduler', `<select id="ng-scheduler" class="text_pole"><option value="native">Provider default</option><option value="karras">Karras</option><option value="exponential">Exponential</option></select>`)}
-      ${field('Seed', `<input id="ng-seed" class="text_pole" type="number" value="${s.image.seed}">`)}
+      ${field('Seed', ngSeedControl('ng-seed', s.image.seed))}
       ${field('Images', `<input id="ng-n" class="text_pole" type="number" min="1" max="4" value="${s.image.n}">`)}
     </div>`;
 
@@ -377,11 +408,13 @@ function bindSettings() {
   bind('ng-base-url', el => {
     s.baseUrl = el.value.trim();
     if (s.provider === 'proxy') s.proxyBaseUrl = s.baseUrl;
+    ngProviderCaps.checked = false;
+    unavailableAutoRoutes.clear();
   });
   bind('ng-format', el => s.responseFormat = el.value, 'change');
   bind('ng-compat', el => s.compatibility = el.value, 'change');
   bind('ng-route', el => s.routeMode = el.value, 'change');
-  bind('ng-model', el => s.model = el.value, 'change');
+  bind('ng-model', el => { s.model = el.value; refreshReferenceLocks(); ngSyncStudioConnection(); }, 'change');
   bind('ng-timeout', el => s.timeoutMs = +el.value || 120000);
   bind('ng-steps', el => s.image.steps = +el.value || 28);
   bind('ng-guidance', el => s.image.guidance = +el.value || 5);
@@ -401,6 +434,8 @@ function bindSettings() {
   document.getElementById('ng-api-key')?.addEventListener('input', e => {
     const s = settings();
     apiKey = e.currentTarget.value;
+    ngProviderCaps.checked = false;
+    unavailableAutoRoutes.clear();
     if (s.provider === 'proxy') {
       s.proxyApiKey = apiKey;
       s.apiKey = apiKey;
@@ -432,6 +467,7 @@ function bindSettings() {
   if (sampler) sampler.value = s.image.sampler;
   if (scheduler) scheduler.value = s.image.scheduler;
   bindDrawer();
+  ngBindSeedControls(document.getElementById('ng-settings') || document);
 }
 
 function setSize(target, preset) {
@@ -463,6 +499,29 @@ const base = () => {
 const endpoint = path => /\/v1$/i.test(base()) ? `${base()}${path.replace(/^\/v1/, '')}` : `${base()}${path}`;
 const headers = () => ({ 'Content-Type': 'application/json', Accept: 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) });
 
+// Resolve CORS transport with the read-only model request. Generation requests
+// use that choice once; retrying a failed POST could generate and bill twice.
+function ngProviderFetch(url, options) {
+  const useServer = settings().corsProxyBaseUrl === base()
+    && new URL(url).origin === new URL(base()).origin;
+  return fetch(useServer ? `/proxy/${url}` : url, options);
+}
+
+async function ngFetchModels(options) {
+  const url = endpoint('/v1/models');
+  try {
+    return await ngProviderFetch(url, options);
+  } catch (error) {
+    if (error.name !== 'TypeError' || options.signal?.aborted || settings().corsProxyBaseUrl === base()) throw error;
+    const response = await fetch(`/proxy/${url}`, options);
+    if (response.status === 404 && /CORS proxy is disabled/i.test(await response.clone().text())) {
+      throw new Error('This API blocks browser CORS. Enable enableCorsProxy: true in SillyTavern config.yaml, restart SillyTavern, then reconnect.');
+    }
+    if (response.ok) settings().corsProxyBaseUrl = base();
+    return response;
+  }
+}
+
 async function errText(response) {
   try {
     const text = await response.text();
@@ -474,7 +533,220 @@ async function errText(response) {
 
 function modelIds(data) {
   const source = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
-  return [...new Set(source.map(item => typeof item === 'string' ? item : item?.id || item?.name).filter(Boolean))];
+  return [...new Set(source.map(item => typeof item === 'string' ? item : item?.id || item?.name).filter(ngIsNaiImageModel))];
+}
+
+function ngIsNaiImageModel(model) {
+  return /(?:^|[^a-z0-9])(?:nai|novelai)(?:[\s._-]*(?:diffusion|image|full|curated|furry|v?\d)|$)/i.test(String(model || '').trim());
+}
+
+function ngModelLabel(model) {
+  const raw = String(model || '');
+  const match = raw.match(/nai-diffusion-(5|4-5|4|3|2)(?:-(full|curated(?:-preview)?))?/i);
+  if (!match) return raw;
+  const variant = match[2] ? ` · ${match[2].replace('-preview', ' preview').replace(/^./, value => value.toUpperCase())}` : '';
+  const prefix = raw.slice(0, match.index).replace(/[-_\s]+$/, '').replace(/\]-\[/g, '] [').replace(/\[OAI\]/gi, '[OpenAI]');
+  const suffix = raw.slice(match.index + match[0].length).replace(/^[-_\s]+/, '');
+  return `${prefix ? `${prefix} ` : ''}NAI ${match[1].replace('-', '.')}${variant}${suffix ? ` ${suffix}` : ''}`;
+}
+
+function ngIsNai5Model(model = settings().model) {
+  return /(?:nai(?:[-_ .]*diffusion)?|novelai)[-_ .]*v?5(?:[^0-9]|$)/i.test(String(model || ''));
+}
+
+function ngNewSeed(previous) {
+  let value = 100000 + ngGenerationSeed(-1) % 900000;
+  if (value === Number(previous)) value = value === 999999 ? 100000 : value + 1;
+  return value;
+}
+
+function ngSeedControl(id, value) {
+  return `<div class="ng-seed-control"><input id="${id}" class="text_pole" type="number" min="-1" max="4294967295" step="1" value="${Number(value)}" aria-label="Seed"><button class="menu_button ng-seed-shuffle" type="button" data-ng-seed-target="${id}" aria-label="New random seed" title="Choose a new seed"><i class="fa-solid fa-dice"></i><span>New seed</span></button><button class="menu_button ng-seed-auto ${Number(value) < 0 ? 'is-active' : ''}" type="button" data-ng-seed-auto="${id}" aria-label="Use a fresh seed for every generation" aria-pressed="${Number(value) < 0}"><i class="fa-solid fa-shuffle"></i><span>Auto</span></button></div>`;
+}
+
+function ngBindSeedControls(root = document) {
+  root.querySelectorAll('[data-ng-seed-target],[data-ng-seed-auto]').forEach(button => {
+    if (button.dataset.ngSeedBound) return;
+    button.dataset.ngSeedBound = 'true';
+    button.addEventListener('click', () => {
+      const input = document.getElementById(button.dataset.ngSeedTarget || button.dataset.ngSeedAuto);
+      if (!input) return;
+      input.value = button.dataset.ngSeedAuto ? -1 : ngNewSeed(input.value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      ngSyncSeedControls(root);
+    });
+  });
+  ngSyncSeedControls(root);
+}
+
+function ngSyncSeedControls(root = document) {
+  root.querySelectorAll('[data-ng-seed-auto]').forEach(button => {
+    const active = Number(document.getElementById(button.dataset.ngSeedAuto)?.value) < 0;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const input = document.getElementById('ng-studio-seed');
+  const footer = root.querySelector?.('.ng-quick-seed');
+  if (!input || !footer) return;
+  const automatic = Number(input.value) < 0;
+  if (!automatic && studio) studio.fixedSeed = Number(input.value);
+  footer.querySelectorAll('[data-ng-seed-mode]').forEach(button => {
+    const active = (button.dataset.ngSeedMode === 'auto') === automatic;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const mode = footer.querySelector('.ng-quick-seed-modes');
+  if (mode) mode.hidden = !ngIsNai5Model();
+  const value = footer.querySelector('#ng-quick-seed-value');
+  const label = automatic ? 'Every image' : String(input.value);
+  if (value && value.textContent !== label) value.textContent = label;
+  const status = footer.querySelector('#ng-seed-mode-status');
+  const announcement = automatic ? 'Auto seed for NAI 5: a new seed will be chosen for each image.' : `Fixed seed: ${input.value}.`;
+  if (status && status.textContent !== announcement) status.textContent = announcement;
+}
+
+function ngComposeVisualStyle(prompt, selected) {
+  const tags = NG_STUDIO_STYLES[selected]?.tags;
+  return tags ? `${String(prompt || '').trim()}, ${tags}` : String(prompt || '').trim();
+}
+
+function ngSyncStudioConnection() {
+  const select = document.getElementById('ng-studio-model');
+  if (!select) return;
+  const s = settings();
+  select.innerHTML = ngStudioModelOptions();
+  select.disabled = !models.length;
+  const modelId = document.getElementById('ng-studio-model-id');
+  if (modelId) modelId.textContent = models.length ? s.model : 'Connect your API to load NAI models.';
+  const badge = document.getElementById('ng-studio-connection-badge');
+  if (badge) {
+    const connected = Boolean(models.length && apiKey);
+    badge.classList.toggle('is-connected', connected);
+    badge.innerHTML = `<span></span>${connected ? 'API connected' : 'Connect your API'}`;
+  }
+  const key = document.getElementById('ng-studio-api-key');
+  const url = document.getElementById('ng-studio-base');
+  if (key && document.activeElement !== key) key.value = apiKey;
+  if (url) { if (document.activeElement !== url) url.value = base(); url.readOnly = isDirectNovelAI(); }
+  const uc = document.getElementById('ng-studio-uc');
+  if (uc) uc.value = s.image.negativePreset || 'none';
+  ngSyncSeedControls(document.getElementById('ng-studio-overlay'));
+  refreshReferenceLocks();
+}
+
+function ngBindStudioDesign() {
+  const root = document.getElementById('ng-studio-overlay');
+  if (!root || !studio) return;
+  ngBindSeedControls(root);
+  ngSyncStudioConnection();
+  root.querySelectorAll('[data-ng-seed-mode]').forEach(button => button.addEventListener('click', () => {
+    const input = document.getElementById('ng-studio-seed');
+    if (!input) return;
+    if (button.dataset.ngSeedMode === 'auto') {
+      if (Number(input.value) >= 0) studio.fixedSeed = Number(input.value);
+      input.value = -1;
+    } else if (Number(input.value) < 0) {
+      input.value = studio.lastSeeds[0] ?? studio.fixedSeed ?? ngNewSeed(-1);
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    ngSyncSeedControls(root);
+  }));
+  root.querySelector('#ng-studio-settings')?.addEventListener('click', () => openStudioSection('connection'));
+  root.querySelector('#ng-studio-model')?.addEventListener('change', event => {
+    settings().model = event.currentTarget.value;
+    const drawer = document.getElementById('ng-model');
+    if (drawer) drawer.value = settings().model;
+    ngSyncStudioConnection();
+    save();
+  });
+  root.querySelector('#ng-studio-provider')?.addEventListener('change', event => {
+    const drawer = document.getElementById('ng-provider');
+    if (drawer) { drawer.value = event.currentTarget.value; drawer.dispatchEvent(new Event('change', { bubbles: true })); }
+    ngSyncStudioConnection();
+  });
+  root.querySelector('#ng-studio-base')?.addEventListener('input', event => {
+    const s = settings();
+    s.baseUrl = event.currentTarget.value.trim();
+    if (s.provider === 'proxy') s.proxyBaseUrl = s.baseUrl;
+    ngProviderCaps.checked = false;
+    unavailableAutoRoutes.clear();
+    models = [];
+    const drawer = document.getElementById('ng-base-url');
+    if (drawer) drawer.value = s.baseUrl;
+    ngSyncStudioConnection();
+    save();
+  });
+  root.querySelector('#ng-studio-api-key')?.addEventListener('input', event => {
+    apiKey = event.currentTarget.value;
+    const s = settings();
+    if (s.provider === 'proxy') { s.proxyApiKey = apiKey; s.apiKey = apiKey; }
+    ngProviderCaps.checked = false;
+    models = [];
+    const drawer = document.getElementById('ng-api-key');
+    if (drawer) drawer.value = apiKey;
+    ngSyncStudioConnection();
+    save();
+  });
+  root.querySelector('#ng-studio-key-toggle')?.addEventListener('click', event => {
+    const key = document.getElementById('ng-studio-api-key');
+    if (!key) return;
+    key.type = key.type === 'password' ? 'text' : 'password';
+    event.currentTarget.setAttribute('aria-label', key.type === 'password' ? 'Show API key' : 'Hide API key');
+  });
+  root.querySelector('#ng-studio-connect')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    const message = document.getElementById('ng-studio-connection-status');
+    if (message) message.textContent = 'Connecting and loading NAI models…';
+    try {
+      await connectAndLoadModels();
+      ngSyncStudioConnection();
+      if (message) message.textContent = document.getElementById('ng-status')?.textContent || (models.length ? `${models.length} NAI models available` : 'No NAI models found. Check this key and Base URL.');
+    } finally { button.disabled = false; }
+  });
+  root.querySelector('#ng-studio-uc')?.addEventListener('change', event => {
+    settings().image.negativePreset = event.currentTarget.value;
+    const drawer = document.getElementById('ng-v051-uc');
+    if (drawer) drawer.value = event.currentTarget.value;
+    save();
+  });
+  root.querySelectorAll('[data-ng-style]').forEach(button => button.addEventListener('click', () => {
+    studio.visualStyle = button.dataset.ngStyle;
+    settings().image.visualStyle = studio.visualStyle;
+    root.querySelectorAll('[data-ng-style]').forEach(item => {
+      const active = item === button;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    ngV067RefreshArtistMixUi();
+    save();
+  }));
+  [['ng-studio-seed', 'seed'], ['ng-studio-steps', 'steps'], ['ng-studio-guidance', 'guidance'], ['ng-studio-n', 'n'], ['ng-studio-sampler', 'sampler'], ['ng-studio-scheduler', 'scheduler']].forEach(([id, key]) => {
+    document.getElementById(id)?.addEventListener('input', () => {
+      settings().image[key] = studio[key];
+      if (key === 'seed' && Number(studio.seed) >= 0) settings().image.fixedSeed = Number(studio.seed);
+      const drawer = document.getElementById(id.replace('ng-studio-', 'ng-'));
+      if (drawer) drawer.value = studio[key];
+      ngSyncSeedControls(root);
+      save();
+    });
+  });
+  root.querySelector('#ng-reuse-seed')?.addEventListener('click', () => {
+    if (!studio.lastSeeds.length) return;
+    const input = document.getElementById('ng-studio-seed');
+    input.value = studio.lastSeeds[0];
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    ngSyncSeedControls(root);
+  });
+  root.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      const button = document.getElementById('ng-generate');
+      if (button && !button.disabled) generateStudio();
+    }
+  });
 }
 
 function status(text, state = '') {
@@ -495,13 +767,17 @@ async function connectAndLoadModels() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs));
   try {
-    const response = await fetch(endpoint('/v1/models'), { headers: headers(), signal: controller.signal });
+    const response = await ngFetchModels({ headers: headers(), signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await errText(response)}`);
     models = modelIds(await response.json());
-    if (!models.length) throw new Error('Connected, but /v1/models returned no selectable model list.');
+    if (!models.length) {
+      const emptySelect = document.getElementById('ng-model');
+      if (emptySelect) { emptySelect.innerHTML = '<option>No NAI image models available</option>'; emptySelect.disabled = true; }
+      throw new Error('Connected, but this key exposes no NAI image models.');
+    }
     const select = document.getElementById('ng-model');
     select.innerHTML = models.map(model => `<option value="${attr(model)}">${esc(model)}</option>`).join('');
-    const preferred = models.includes(s.model) ? s.model : models.find(model => /nai.*4.?5.*full/i.test(model)) || models[0];
+    const preferred = models.includes(s.model) ? s.model : models.find(model => /nai.*5[-_. ]full/i.test(model) && !/4[-_. ]5/i.test(model)) || models.find(model => /nai.*4.?5.*full/i.test(model)) || models[0];
     s.model = preferred;
     select.value = preferred;
     select.disabled = false;
@@ -651,6 +927,7 @@ function newStudio(mode = 'free', focus = 'prompt') {
     sampler: defaults.sampler,
     scheduler: defaults.scheduler,
     seed: defaults.seed,
+    fixedSeed: defaults.fixedSeed,
     n: defaults.n,
     characters: [],
     vibes: [],
@@ -663,6 +940,8 @@ function newStudio(mode = 'free', focus = 'prompt') {
     noise: 0.1,
     maskTool: 'brush',
     brushSize: 48,
+    visualStyle: settings().image.visualStyle || 'none',
+    lastSeeds: [],
     generated: [],
   };
 }
@@ -677,36 +956,57 @@ function range(id, label, value, min = 0, max = 1, step = 0.01) {
   return `<label class="ng-range-row"><span>${label} <output>${Number(value).toFixed(2)}</output></span><input id="${id}" type="range" min="${min}" max="${max}" step="${step}" value="${value}"></label>`;
 }
 
+const NG_STUDIO_STYLES = {
+  none: { label: 'No preset', icon: 'fa-minus', description: 'Your own style', tags: '' },
+  anime: { label: 'Anime', icon: 'fa-star', description: 'Clean & vibrant', tags: 'anime style, clean lineart, vibrant colors' },
+  manhwa: { label: 'Manhwa', icon: 'fa-gem', description: 'Soft & cinematic', tags: 'semi-realistic anime, korean manhwa style, soft shading, cinematic lighting' },
+  painterly: { label: 'Painterly', icon: 'fa-palette', description: 'Light & texture', tags: 'painterly style, soft brush strokes, atmospheric lighting' },
+  realistic: { label: 'Realistic', icon: 'fa-camera', description: 'Natural detail', tags: 'photorealistic, natural lighting, detailed skin texture' },
+  fantasy: { label: 'Fantasy', icon: 'fa-dragon', description: 'Worlds & wonder', tags: 'fantasy illustration, dramatic lighting, detailed environment' },
+};
+
+function ngStudioModelOptions() {
+  return models.length
+    ? models.map(model => `<option value="${attr(model)}" ${settings().model === model ? 'selected' : ''}>${esc(ngModelLabel(model))}</option>`).join('')
+    : `<option value="${attr(settings().model)}">${esc(ngModelLabel(settings().model))}</option>`;
+}
+
 function studioHtml() {
   const s = studio;
-  const modeName = ({ portrait: 'Portrait', selfie: 'Selfie', user: 'User', last: 'Last Message', manga: 'Manga Panel', free: 'Free / Scene' })[s.mode] || 'Free / Scene';
-  return `<div class="ng-studio-shell" role="dialog" aria-modal="true">
-    <header class="ng-studio-header"><div class="ng-studio-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span><strong>Novel Gen</strong><small>${modeName}</small></span></div><button id="ng-close" class="menu_button ng-studio-close" type="button"><i class="fa-solid fa-xmark"></i></button></header>
-    <nav class="ng-v055-mobile-nav" aria-label="Novel Gen mobile workspace">
-      <button class="menu_button" type="button" data-mobile-pane="preview"><i class="fa-regular fa-image"></i><span>Image</span></button>
-      <button class="menu_button is-active" type="button" data-mobile-pane="controls" data-tab="generate" aria-pressed="true"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate</span></button>
-      <button class="menu_button" type="button" data-mobile-pane="controls" data-tab="gallery"><i class="fa-solid fa-images"></i><span>Gallery</span></button>
-    </nav>
+  const prefs = settings();
+  const connected = Boolean(models.length && apiKey);
+  const styles = Object.entries(NG_STUDIO_STYLES).map(([id, style]) => `<button class="menu_button ng-style-card ${(s.visualStyle || 'none') === id ? 'is-active' : ''}" type="button" data-ng-style="${id}" aria-pressed="${(s.visualStyle || 'none') === id}"><i class="fa-solid ${style.icon}"></i><span><strong>${style.label}</strong><small>${style.description}</small></span></button>`).join('');
+  return `<div class="ng-studio-shell" role="dialog" aria-modal="true" aria-label="Novel Generation Studio">
+    <header class="ng-studio-header">
+      <div class="ng-studio-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span><strong>Novel Gen</strong><small>v${VERSION} · NAI image studio</small></span></div>
+      <div class="ng-studio-header-actions"><span id="ng-studio-connection-badge" class="ng-connection-badge ${connected ? 'is-connected' : ''}"><span></span>${connected ? 'API connected' : 'Connect your API'}</span><button id="ng-studio-settings" class="menu_button ng-icon-button" type="button" aria-label="API connection settings"><i class="fa-solid fa-gear"></i></button><button id="ng-close" class="menu_button ng-studio-close ng-icon-button" type="button" aria-label="Close Studio"><i class="fa-solid fa-xmark"></i></button></div>
+    </header>
+    <nav class="ng-v055-mobile-nav" aria-label="Studio workspace"><button class="menu_button is-active" type="button" data-mobile-pane="controls" data-tab="generate" aria-pressed="true"><i class="fa-solid fa-sliders"></i><span>Create</span></button><button class="menu_button" type="button" data-mobile-pane="preview"><i class="fa-regular fa-image"></i><span>Preview</span></button><button class="menu_button" type="button" data-mobile-pane="controls" data-tab="gallery"><i class="fa-solid fa-clock-rotate-left"></i><span>History</span></button></nav>
     <main class="ng-studio-main">
-      <section id="ng-preview" class="ng-studio-preview"><div class="ng-preview-empty"><i class="fa-regular fa-image"></i><strong>Ready to generate</strong><span>Generated images appear here and can be reused without downloading.</span></div></section>
       <aside class="ng-studio-controls">
-        <div class="ng-studio-tabs"><button class="menu_button is-active" data-tab="generate" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate</button><button class="menu_button" data-tab="gallery" type="button"><i class="fa-solid fa-images"></i> Gallery <span id="ng-gallery-count">${gallery.length}</span></button></div>
+        <div class="ng-studio-tabs"><button class="menu_button is-active" data-tab="generate" type="button"><i class="fa-solid fa-sliders"></i> Create</button><button class="menu_button" data-tab="gallery" type="button"><i class="fa-solid fa-clock-rotate-left"></i> History <span id="ng-gallery-count">${gallery.length}</span></button></div>
         <div id="ng-generate-panel">
-          ${studioSection('prompt', 'fa-pen', 'Prompt', `${field('Prompt', `<textarea id="ng-prompt" class="text_pole" rows="7">${esc(s.prompt)}</textarea>`)}${field('Undesired Content', `<textarea id="ng-negative" class="text_pole" rows="4">${esc(s.negative)}</textarea>`)}`, true)}
-          ${studioSection('characters', 'fa-people-group', 'Character Prompts', `<div id="ng-character-list"></div><button id="ng-character-add" class="menu_button" type="button"><i class="fa-solid fa-plus"></i> Add Character</button>`)}
-          ${studioSection('vibe', 'fa-wand-magic-sparkles', 'Vibe Transfer', `<div id="ng-vibe-lock" class="ng-compat-note"></div><div class="ng-actions"><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Add vibe image<input id="ng-vibe-file" type="file" accept="image/*" multiple></label><button id="ng-vibe-normalize" class="menu_button" type="button"><i class="fa-solid fa-scale-balanced"></i> Normalize strengths</button></div><div id="ng-vibe-list" class="ng-reference-list"></div>`)}
-          ${studioSection('precise', 'fa-id-card-clip', 'Precise Reference', `<div id="ng-precise-lock" class="ng-compat-note"></div><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Add precise reference<input id="ng-precise-file" type="file" accept="image/*" multiple></label><div id="ng-precise-list" class="ng-reference-list"></div>`)}
-          ${studioSection('edit', 'fa-paintbrush', 'Image-to-Image / Inpaint', `${field('Mode', `<select id="ng-edit-mode" class="text_pole"><option value="img2img">Image-to-Image</option><option value="inpaint">Inpaint</option></select>`)}<div class="ng-actions"><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Choose source image<input id="ng-source-file" type="file" accept="image/*"></label></div><div id="ng-source-card" class="ng-source-card"><span>No source image selected. You can also choose “Inpaint” or “Use as source” from any generated image.</span></div><div id="ng-mask-editor" class="ng-mask-editor" hidden><div class="ng-mask-toolbar"><button class="menu_button is-active" data-mask-tool="brush" type="button"><i class="fa-solid fa-paintbrush"></i> Brush</button><button class="menu_button" data-mask-tool="eraser" type="button"><i class="fa-solid fa-eraser"></i> Eraser</button><button id="ng-mask-clear" class="menu_button" type="button"><i class="fa-solid fa-trash"></i> Clear</button><label class="ng-brush-size">Size <input id="ng-brush-size" type="range" min="8" max="180" step="2" value="${s.brushSize}"></label></div><div class="ng-mask-stage"><img id="ng-mask-source" alt="Inpaint source"><canvas id="ng-mask-canvas"></canvas></div><small class="ng-help">Paint white over the area that should be regenerated. Use Eraser to remove mask strokes.</small></div>${range('ng-strength', 'Strength', s.strength)}${range('ng-noise', 'Noise', s.noise)}`)}
-          ${studioSection('upscale', 'fa-up-right-and-down-left-from-center', 'Upscale / Enhance', `<p class="ng-muted">Select any generated image, then use 2× or 4K. The extension first tries a provider upscale route; if unavailable it falls back to a low-strength high-resolution img2img pass.</p><div id="ng-upscale-source" class="ng-source-card"><span>No source selected.</span></div><div class="ng-actions"><button id="ng-upscale-2x" class="menu_button" type="button"><i class="fa-solid fa-up-right-and-down-left-from-center"></i> Upscale 2×</button><button id="ng-upscale-4k" class="menu_button" type="button"><i class="fa-solid fa-display"></i> Enhance to 4K</button></div>`)}
-          ${studioSection('parameters', 'fa-sliders', 'Image Parameters', `${sizePicker('ng-studio', s)}<div class="ng-grid ng-grid-2">${field('Steps', `<input id="ng-studio-steps" class="text_pole" type="number" min="1" max="100" value="${s.steps}">`)}${field('Guidance', `<input id="ng-studio-guidance" class="text_pole" type="number" min="0" max="30" step=".1" value="${s.guidance}">`)}${field('Sampler', `<select id="ng-studio-sampler" class="text_pole"><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_euler">Euler</option><option value="k_dpmpp_sde">DPM++ SDE</option></select>`)}${field('Scheduler', `<select id="ng-studio-scheduler" class="text_pole"><option value="native">Provider default</option><option value="karras">Karras</option><option value="exponential">Exponential</option></select>`)}${field('Seed', `<input id="ng-studio-seed" class="text_pole" type="number" value="${s.seed}">`)}${field('Images', `<input id="ng-studio-n" class="text_pole" type="number" min="1" max="4" value="${s.n}">`)}</div>`)}
-          ${studioSection('debug', 'fa-bug', 'Request Debug', `<div class="ng-actions"><button id="ng-debug-clear" class="menu_button" type="button"><i class="fa-solid fa-trash"></i> Clear debug</button></div><pre id="ng-debug-output" class="ng-debug-output"></pre>`)}
+          <div class="ng-studio-model-card"><div class="ng-card-eyebrow"><span>IMAGE MODEL</span><span class="ng-nai-pill">NAI only</span></div>${field('Model', `<select id="ng-studio-model" class="text_pole" ${models.length ? '' : 'disabled'}>${ngStudioModelOptions()}</select>`)}<small id="ng-studio-model-id" class="ng-help">${connected ? esc(prefs.model) : 'Connect your API to load NAI models.'}</small></div>
+          ${studioSection('connection', 'fa-plug', 'API connection', `<div class="ng-grid ng-grid-2">${field('Provider', `<select id="ng-studio-provider" class="text_pole"><option value="proxy" ${prefs.provider === 'proxy' ? 'selected' : ''}>Custom API / proxy</option><option value="novelai" ${prefs.provider === 'novelai' ? 'selected' : ''}>Direct NovelAI</option></select>`)}${field('Base URL', `<input id="ng-studio-base" class="text_pole" type="url" placeholder="https://your-provider.com/v1" value="${attr(base())}" ${isDirectNovelAI() ? 'readonly' : ''}>`)}</div>${field('API key', `<div class="ng-key-row"><input id="ng-studio-api-key" class="text_pole" type="password" autocomplete="off" placeholder="Enter your API key" value="${attr(apiKey)}"><button id="ng-studio-key-toggle" class="menu_button ng-icon-button" type="button" aria-label="Show API key"><i class="fa-regular fa-eye"></i></button></div>`)}<button id="ng-studio-connect" class="menu_button ng-connect-button" type="button"><i class="fa-solid fa-link"></i> Connect & load NAI models</button><small id="ng-studio-connection-status" class="ng-help" role="status">${connected ? `${models.length} NAI models available` : 'Connect to see the NAI models available to your key.'}</small>`, !connected)}
+          ${studioSection('prompt', 'fa-pen-nib', 'Prompt', `${field('Describe your image', `<textarea id="ng-prompt" class="text_pole" rows="6" placeholder="A character, a place, a moment. Describe what you want to see…">${esc(s.prompt)}</textarea>`)}<div class="ng-negative-heading"><span>Undesired content</span><select id="ng-studio-uc" class="text_pole" aria-label="Undesired content preset"><option value="none">No preset</option><option value="human">Human focus</option><option value="light">Light</option><option value="heavy">Heavy</option></select></div><textarea id="ng-negative" class="text_pole" rows="3" aria-label="Undesired content" placeholder="Elements you want the image to avoid…">${esc(s.negative)}</textarea>`, true)}
+          ${studioSection('style', 'fa-palette', 'Visual style', `<div class="ng-style-grid">${styles}</div><small class="ng-help">An optional style preset. Your prompt and Artist Mix stay editable.</small>`, true)}
+          ${studioSection('canvas', 'fa-expand', 'Canvas & seed', `${sizePicker('ng-studio', s)}<div class="ng-seed-heading"><span>Seed</span><small>−1 = a fresh seed each time</small></div>${ngSeedControl('ng-studio-seed', s.seed)}<div class="ng-grid ng-grid-2 ng-batch-row">${field('Images per run', `<input id="ng-studio-n" class="text_pole" type="number" min="1" max="4" value="${s.n}">`)}<div class="ng-seed-note"><i class="fa-solid fa-fingerprint"></i><span>Keep a seed to compare<br>prompt and style changes.</span></div></div>`, true)}
+          ${studioSection('parameters', 'fa-sliders', 'Generation settings', `<div class="ng-grid ng-grid-2">${field('Steps', `<input id="ng-studio-steps" class="text_pole" type="number" min="1" max="100" value="${s.steps}">`)}${field('Prompt guidance', `<input id="ng-studio-guidance" class="text_pole" type="number" min="0" max="30" step=".1" value="${s.guidance}">`)}${field('Sampler', `<select id="ng-studio-sampler" class="text_pole"><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_euler">Euler</option><option value="k_dpmpp_sde">DPM++ SDE</option></select>`)}${field('Noise schedule', `<select id="ng-studio-scheduler" class="text_pole"><option value="native">Provider default</option><option value="karras">Karras</option><option value="exponential">Exponential</option></select>`)}</div>`)}
+          ${studioSection('characters', 'fa-people-group', 'Character prompts', `<div id="ng-character-list"></div><button id="ng-character-add" class="menu_button" type="button"><i class="fa-solid fa-plus"></i> Add character</button>`)}
+          ${studioSection('vibe', 'fa-wand-magic-sparkles', 'Vibe Transfer', `<div id="ng-vibe-lock" class="ng-compat-note"></div><div class="ng-actions"><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Add vibe image<input id="ng-vibe-file" type="file" accept="image/*" multiple></label><button id="ng-vibe-normalize" class="menu_button" type="button">Normalize strengths</button></div><div id="ng-vibe-list" class="ng-reference-list"></div>`)}
+          ${studioSection('precise', 'fa-id-card-clip', 'Precise Reference', `<div id="ng-precise-lock" class="ng-compat-note"></div><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Add reference<input id="ng-precise-file" type="file" accept="image/*" multiple></label><div id="ng-precise-list" class="ng-reference-list"></div>`)}
+          ${studioSection('edit', 'fa-paintbrush', 'Image-to-Image / Inpaint', `${field('Mode', `<select id="ng-edit-mode" class="text_pole"><option value="img2img">Image-to-Image</option><option value="inpaint">Inpaint</option></select>`)}<label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Choose source image<input id="ng-source-file" type="file" accept="image/*"></label><div id="ng-source-card" class="ng-source-card"><span>Choose an image or reuse one from Preview.</span></div><div id="ng-mask-editor" class="ng-mask-editor" hidden><div class="ng-mask-toolbar"><button class="menu_button is-active" data-mask-tool="brush" type="button">Brush</button><button class="menu_button" data-mask-tool="eraser" type="button">Eraser</button><button id="ng-mask-clear" class="menu_button" type="button">Clear</button><label class="ng-brush-size">Size <input id="ng-brush-size" type="range" min="8" max="180" step="2" value="${s.brushSize}"></label></div><div class="ng-mask-stage"><img id="ng-mask-source" alt="Inpaint source"><canvas id="ng-mask-canvas"></canvas></div><small class="ng-help">Paint white over the area to regenerate.</small></div>${range('ng-strength', 'Strength', s.strength)}${range('ng-noise', 'Noise', s.noise)}`)}
+          ${studioSection('upscale', 'fa-up-right-and-down-left-from-center', 'Upscale / Enhance', `<div id="ng-upscale-source" class="ng-source-card"><span>Choose a generated image as a source.</span></div><div class="ng-actions"><button id="ng-upscale-2x" class="menu_button" type="button">Upscale 2×</button><button id="ng-upscale-4k" class="menu_button" type="button">Enhance to 4K</button></div>`)}
+          ${studioSection('debug', 'fa-code', 'Request details', `<button id="ng-debug-clear" class="menu_button" type="button">Clear request history</button><pre id="ng-debug-output" class="ng-debug-output"></pre>`)}
         </div>
         <div id="ng-gallery-panel" hidden><div id="ng-gallery-grid" class="ng-gallery-grid"></div></div>
       </aside>
+      <section class="ng-studio-stage"><header class="ng-stage-header"><div><span class="ng-card-eyebrow">YOUR CANVAS</span><h2>Preview</h2></div><span id="ng-stage-size" class="ng-stage-size">${s.width} × ${s.height}</span></header><section id="ng-preview" class="ng-studio-preview"><div class="ng-preview-empty"><div class="ng-empty-frame"><i class="fa-regular fa-image"></i><span></span></div><strong>Image preview</strong><span>Generated images will appear here.</span><small>Portrait · Square · Landscape</small></div></section><footer class="ng-stage-meta"><span id="ng-last-seed"><i class="fa-solid fa-fingerprint"></i> Your generation details will appear here</span><button id="ng-reuse-seed" class="menu_button" type="button" hidden><i class="fa-solid fa-rotate-left"></i> Reuse seed</button></footer></section>
     </main>
-    <footer class="ng-studio-footer"><div id="ng-gen-status" class="ng-generation-status"></div><button id="ng-generate" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate</button></footer>
+    <footer class="ng-studio-footer"><div id="ng-gen-status" class="ng-generation-status" role="status">Ready<span class="ng-shortcut">Ctrl / ⌘ + Enter to generate</span></div><div class="ng-footer-actions"><div class="ng-quick-seed"><div class="ng-quick-seed-number"><small>SEED</small><strong id="ng-quick-seed-value">${Number(s.seed) < 0 ? 'Every image' : s.seed}</strong></div><div class="ng-quick-seed-modes" role="group" aria-label="Seed mode for NAI 5" ${ngIsNai5Model() ? '' : 'hidden'}><button class="menu_button" type="button" data-ng-seed-mode="auto" aria-label="Auto seed for NAI 5" aria-pressed="${Number(s.seed) < 0}" title="Choose a fresh seed for each NAI 5 image"><i class="fa-solid fa-shuffle"></i><span>Auto</span></button><button class="menu_button" type="button" data-ng-seed-mode="fixed" aria-label="Fixed seed" aria-pressed="${Number(s.seed) >= 0}" title="Keep the current or last used seed"><i class="fa-solid fa-lock"></i><span>Fixed</span></button></div><button class="menu_button ng-quick-seed-roll" type="button" data-ng-seed-target="ng-studio-seed" aria-label="Roll a new seed and use Fixed mode" title="New seed · switch to Fixed"><i class="fa-solid fa-dice"></i><span>New seed</span></button><span id="ng-seed-mode-status" class="ng-sr-only" role="status" aria-live="polite"></span></div><button id="ng-generate" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate image</span><i class="fa-solid fa-arrow-right"></i></button></div></footer>
   </div>`;
 }
+
 
 function isMobileStudioEnvironment() {
   let contextMobile = false;
@@ -916,6 +1216,7 @@ function bindStudio() {
   renderDebug();
   refreshReferenceLocks();
   refreshMaskEditor();
+  ngBindStudioDesign();
 }
 
 function switchTab(tab) {
@@ -986,12 +1287,13 @@ function refreshReferenceLocks() {
   if (!studio) return;
   const vibeInput = document.getElementById('ng-vibe-file');
   const preciseInput = document.getElementById('ng-precise-file');
+  const preciseModel = /4[-_. ]?5/i.test(String(settings().model));
   if (vibeInput) vibeInput.disabled = studio.precise.length > 0;
-  if (preciseInput) preciseInput.disabled = studio.vibes.length > 0;
+  if (preciseInput) preciseInput.disabled = studio.vibes.length > 0 || !preciseModel;
   const vibeNote = document.getElementById('ng-vibe-lock');
   const preciseNote = document.getElementById('ng-precise-lock');
   if (vibeNote) vibeNote.textContent = studio.precise.length ? 'Disabled while Precise Reference is active.' : 'V4/V4.5 uses native reference_image_multiple arrays when the proxy accepts them.';
-  if (preciseNote) preciseNote.textContent = studio.vibes.length ? 'Disabled while Vibe Transfer is active.' : 'V4.5 Director Reference uses Character / Style / Character & Style plus Strength and Fidelity.';
+  if (preciseNote) preciseNote.textContent = !preciseModel ? 'Precise Reference requires NAI V4.5. Select a V4.5 model; NAI V5 does not support this feature.' : studio.vibes.length ? 'Disabled while Vibe Transfer is active.' : 'V4.5 Director Reference uses Character / Style / Character & Style plus Strength and Fidelity. The provider must forward these fields.';
 }
 
 function renderRefs(kind) {
@@ -1043,6 +1345,7 @@ function renderCharacters() {
 
 function setStudioSource(ref) {
   if (!studio || !ref) return;
+  if (studio.source !== ref) studio.mask = null;
   studio.source = ref;
   const sourceCard = document.getElementById('ng-source-card');
   const upscaleCard = document.getElementById('ng-upscale-source');
@@ -1058,6 +1361,8 @@ function refreshMaskEditor() {
   const active = studio.editMode === 'inpaint' && studio.source;
   editor.hidden = !active;
   if (!active) return;
+  const help = editor.querySelector('.ng-help');
+  if (help) help.textContent = 'Paint white over the area to regenerate. Source and mask use the selected Canvas size together. The provider must support native inpainting masks.';
   const img = document.getElementById('ng-mask-source');
   if (!img) return;
   img.onload = () => initializeMaskCanvas(img);
@@ -1068,10 +1373,16 @@ function refreshMaskEditor() {
 function initializeMaskCanvas(img) {
   const canvas = document.getElementById('ng-mask-canvas');
   if (!canvas || !img.naturalWidth || !img.naturalHeight) return;
-  const maxSide = 1600;
-  const scale = Math.min(1, maxSide / Math.max(img.naturalWidth, img.naturalHeight));
-  canvas.width = Math.max(1, Math.round(img.naturalWidth * scale));
-  canvas.height = Math.max(1, Math.round(img.naturalHeight * scale));
+  const sourceId = studio?.source?.id || studio?.source?.url || '';
+  // Keep the interactive mask small on mobile. Request preparation scales
+  // source and mask together to the final canvas dimensions.
+  const scale = Math.min(1, 1600 / Math.max(img.naturalWidth, img.naturalHeight));
+  const width = Math.max(1, Math.round(img.naturalWidth * scale));
+  const height = Math.max(1, Math.round(img.naturalHeight * scale));
+  if (canvas.dataset.ngSourceId === sourceId && canvas.width === width && canvas.height === height) return;
+  canvas.dataset.ngSourceId = sourceId;
+  canvas.width = width;
+  canvas.height = height;
   const context = canvas.getContext('2d');
   context.save();
   context.globalCompositeOperation = 'source-over';
@@ -1142,6 +1453,16 @@ function updateMaskFromCanvas() {
   const canvas = document.getElementById('ng-mask-canvas');
   if (!canvas || !studio) return;
   try {
+    if (canvas.dataset.ngSourceId !== (studio.source?.id || studio.source?.url || '')) {
+      studio.mask = null;
+      return;
+    }
+    const pixels = canvas.getContext('2d').getImageData(0, 0, canvas.width, canvas.height).data;
+    let painted = false;
+    for (let i = 0; i < pixels.length; i += 4) {
+      if (pixels[i] > 0 && pixels[i + 3] > 0) { painted = true; break; }
+    }
+    if (!painted) { studio.mask = null; return; }
     const url = canvas.toDataURL('image/png');
     studio.mask = { id: `mask-${Date.now()}`, name: 'mask.png', url, base64: url.split(',')[1] || '' };
   } catch (error) {
@@ -1157,6 +1478,115 @@ function hasAdvancedReferences(state) {
 
 function imageValue(ref) {
   return ref?.base64 || ref?.url || '';
+}
+
+const ngPreparedImageCache = new WeakMap();
+
+function ngLoadInputImage(ref, signal) {
+  return new Promise((resolve, reject) => {
+    const image = new Image();
+    const value = imageValue(ref);
+    const url = ref?.url?.startsWith('data:image/') ? ref.url
+      : /^(?:https?:|blob:|data:)/i.test(value) ? value : `data:image/png;base64,${value}`;
+    const finish = (error) => {
+      image.onload = image.onerror = null;
+      signal?.removeEventListener('abort', abort);
+      if (error) reject(error); else resolve(image);
+    };
+    const abort = () => { finish(new DOMException('Aborted', 'AbortError')); image.src = ''; };
+    if (signal?.aborted) { abort(); return; }
+    image.onload = () => finish();
+    image.onerror = () => finish(new Error(`Cannot read ${ref?.name || 'input image'}. Upload it from your device if its host blocks access.`));
+    signal?.addEventListener('abort', abort, { once: true });
+    if (/^https?:/i.test(url)) image.crossOrigin = 'anonymous';
+    image.src = url;
+  });
+}
+
+async function ngPrepareInputImage(ref, kind, width, height, signal) {
+  const key = `${kind}:${width || 0}x${height || 0}:${imageValue(ref)}`;
+  const cached = ngPreparedImageCache.get(ref);
+  if (cached?.key === key) return cached.ref;
+  const image = await ngLoadInputImage(ref, signal);
+  if (kind === 'precise') {
+    const ratio = image.naturalWidth / image.naturalHeight;
+    [width, height] = ratio > 1.2 ? [1536, 1024] : ratio < 1 / 1.2 ? [1024, 1536] : [1472, 1472];
+  }
+  const canvas = document.createElement('canvas');
+  canvas.width = width;
+  canvas.height = height;
+  const context = canvas.getContext('2d');
+  if (!context) throw new Error('The browser cannot prepare input images.');
+  if (kind === 'mask' || kind === 'precise') {
+    context.fillStyle = kind === 'mask' ? '#000000' : '#ffffff';
+    context.fillRect(0, 0, width, height);
+  }
+  if (kind === 'precise') {
+    const scale = Math.min(width / image.naturalWidth, height / image.naturalHeight);
+    const drawWidth = image.naturalWidth * scale;
+    const drawHeight = image.naturalHeight * scale;
+    context.drawImage(image, (width - drawWidth) / 2, (height - drawHeight) / 2, drawWidth, drawHeight);
+  } else {
+    context.imageSmoothingEnabled = kind !== 'mask';
+    context.drawImage(image, 0, 0, width, height);
+  }
+  let url;
+  try { url = canvas.toDataURL('image/png'); }
+  catch { throw new Error('The input image host blocks canvas access. Upload the image from your device.'); }
+  const prepared = { ...ref, url, base64: url.split(',')[1], width, height };
+  ngPreparedImageCache.set(ref, { key, ref: prepared });
+  return prepared;
+}
+
+async function ngPrepareAdvancedImages(state, signal) {
+  const prepared = { ...state };
+  if (state.precise?.length) {
+    prepared.precise = [];
+    for (const ref of state.precise) {
+      const image = await ngPrepareInputImage(ref, 'precise', 0, 0, signal);
+      // Controls remain live even when the prepared pixels are cached.
+      prepared.precise.push({ ...ref, url: image.url, base64: image.base64 });
+    }
+  }
+  if (state.source) {
+    prepared.source = await ngPrepareInputImage(state.source, 'source', state.width, state.height, signal);
+    if (naiAction(state) === 'infill') {
+      prepared.mask = await ngPrepareInputImage(state.mask, 'mask', state.width, state.height, signal);
+    }
+  }
+  return prepared;
+}
+
+function ngGenerationSeed(value) {
+  const selected = Number(value);
+  if (Number.isInteger(selected) && selected >= 0 && selected <= 0xffffffff) return selected;
+  const bytes = new Uint32Array(1);
+  return globalThis.crypto?.getRandomValues ? crypto.getRandomValues(bytes)[0] : Math.floor(Math.random() * 0x100000000);
+}
+
+function ngPngGenerationMetadata(image) {
+  if (!/^data:image\/png;base64,/i.test(String(image))) return null;
+  try {
+    const bytes = Uint8Array.from(atob(image.slice(image.indexOf(',') + 1)), character => character.charCodeAt(0));
+    if (bytes.length < 8 || bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47) return null;
+    const view = new DataView(bytes.buffer);
+    const decoder = new TextDecoder();
+    for (let offset = 8; offset + 12 <= bytes.length;) {
+      const length = view.getUint32(offset);
+      if (length > bytes.length - offset - 12) return null;
+      if (decoder.decode(bytes.subarray(offset + 4, offset + 8)) === 'tEXt') {
+        const text = decoder.decode(bytes.subarray(offset + 8, offset + 8 + length));
+        if (text.startsWith('Comment\0')) {
+          const metadata = JSON.parse(text.slice(8));
+          return Number.isInteger(metadata.seed) && metadata.seed >= 0 && metadata.seed <= 0xffffffff
+            ? { seed: metadata.seed, steps: metadata.steps, negative: metadata.uc || metadata.v4_negative_prompt?.caption?.base_caption }
+            : null;
+        }
+      }
+      offset += length + 12;
+    }
+  } catch { /* A provider may return PNG without readable generation metadata. */ }
+  return null;
 }
 
 function nativeReferenceFields(state) {
@@ -1321,7 +1751,7 @@ function naiParameters(state) {
     straight_alpha: isV5 ? false : undefined,
     use_coords: charCaptions.length > 0,
     normalize_reference_strength_multiple: true,
-    inpaintImg2ImgStrength: 1,
+    inpaintImg2ImgStrength: naiAction(state) === 'infill' ? Number(state.strength) : 1,
     legacy_uc: false,
     uc: negative,
     negative_prompt: negative,
@@ -1426,6 +1856,7 @@ function routeCandidates() {
   const mode = s.routeMode;
   // RVL does not route its normal NAI V5/V4.5 models through the images API,
   // even when a generic route override was previously saved in the extension.
+  if (ngUsesShopNativeChat(s.model)) return ['chat'];
   if (ngUsesCompactChatImageRoute(s.model)) return ['chat'];
   if (ngUsesBackupImagesRoute(s.model)) return ['images'];
   if (mode === 'images') return ['images'];
@@ -1461,6 +1892,9 @@ function chatPayloadFrom(payload, state) {
     width: canvas.width,
     height: canvas.height,
   };
+  if (ngUsesShopNativeChat(model)) {
+    return { model, messages: [{ role: 'user', content: state.prompt.trim() }], input: state.prompt.trim(), action: naiAction(state), parameters: ngBuildNativeParameters(state), use_new_shared_trial: ngIsNai5Model(model) ? true : undefined };
+  }
   if (ngUsesCompactChatImageRoute(model)) {
     const negative = state.negative?.trim();
     const content = negative
@@ -1476,6 +1910,23 @@ function chatPayloadFrom(payload, state) {
       height: rvlHeight,
       seed: ngRvlChatSeed(state),
     });
+  }
+  if (ngUsesParameterChatImageRoute(model) && ngIsPlainImageState(state)) {
+    // XFX's public client uses Parameter{...} in the user message. It does
+    // not send nested image_generation/parameters to its NAI chat route.
+    // Source: https://design.xfxaigc.com (Hr/Br chat request builders).
+    const controls = [`size:${canvas.width}:${canvas.height}`];
+    const negative = state.negative?.trim();
+    if (negative) controls.push(`negative_prompt:${negative}`);
+    controls.push(`steps:${Math.round(state.steps)}`, `scale:${Number(state.guidance)}`);
+    if (state.sampler) controls.push(`sampler:${state.sampler}`);
+    // "native" means use the provider's default, rather than overriding it.
+    if (state.scheduler && state.scheduler !== 'native') controls.push(`scheduler:${state.scheduler}`);
+    controls.push(`seed:${ngRvlChatSeed(state)}`, 'base64:true');
+    return {
+      model,
+      messages: [{ role: 'user', content: `${state.prompt.trim()} Parameter{${controls.join(',')}}` }],
+    };
   }
   return {
     model,
@@ -1532,7 +1983,7 @@ async function postGeneration(route, candidate, state, signal) {
   const body = route === 'chat' ? chatPayloadFrom(candidate.payload, state) : candidate.payload;
   const url = endpoint(path);
   const started = performance.now();
-  const response = await fetch(url, {
+  const response = await ngProviderFetch(url, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
@@ -1569,6 +2020,7 @@ async function generateState(state, label = 'Generating…') {
   if (!base()) throw new Error('Set Base URL in the Novel Generation drawer first.');
   if (!apiKey) throw new Error('Enter and test the API key first.');
   if (!s.model) throw new Error('Select a model first.');
+  if (!ngIsNaiImageModel(s.model)) throw new Error('Select a NAI image model first.');
   if (!state.prompt?.trim()) throw new Error('Enter a prompt first.');
   if (state.vibes?.length && state.precise?.length) {
     throw new Error('NovelAI V4.5 does not allow Vibe Transfer and Precise Reference at the same time. Remove one reference type.');
@@ -1705,19 +2157,43 @@ function rememberImages(images, state, extra = {}) {
 async function generateStudio() {
   const button = document.getElementById('ng-generate');
   const out = document.getElementById('ng-gen-status');
+  const buttonHtml = button?.innerHTML;
   button?.setAttribute('disabled', 'disabled');
+  button?.setAttribute('aria-busy', 'true');
+  if (button) button.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i><span>Generating…</span>';
   if (out) out.textContent = 'Generating…';
   try {
     const result = await generateState(studio);
     studio.generated = result.images;
+    const requestedSeeds = result.seeds || [result.requestSeed];
+    const metadata = result.images.map(ngPngGenerationMetadata);
+    const seedMismatch = metadata.some((item, index) => item && requestedSeeds[index] !== undefined && item.seed !== requestedSeeds[index]);
+    studio.lastSeeds = metadata.every(Boolean) ? metadata.map(item => item.seed) : requestedSeeds.filter(seed => Number.isInteger(seed) && seed >= 0);
+    const seedInfo = document.getElementById('ng-last-seed');
+    const seedLabel = metadata.every(Boolean) ? 'Image seed' : 'Requested seed (unverified)';
+    if (seedInfo) seedInfo.textContent = studio.lastSeeds.length ? `${seedLabel} ${studio.lastSeeds.join(' · ')}${seedMismatch ? ` · requested ${requestedSeeds.join(' / ')}` : ''}  /  ${studio.width} × ${studio.height}` : `${studio.width} × ${studio.height} · ${settings().model}`;
+    const reuseSeed = document.getElementById('ng-reuse-seed');
+    if (reuseSeed) reuseSeed.hidden = !studio.lastSeeds.length;
     showImages(result.images);
     rememberImages(result.images, studio, { schema: result.schema, route: result.route });
-    if (out) out.textContent = `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'} using ${result.schema}.`;
+    if (out) {
+      out.textContent = `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'}.`;
+      if (seedMismatch) out.textContent += ' Provider seed differs from the requested seed. Auto/Fixed was not applied by this route.';
+      if (!isDirectNovelAI() && (hasAdvancedReferences(studio) || studio.source)) {
+        out.textContent += ' The proxy has not confirmed that the source, mask or reference fields were applied.';
+      }
+    }
+    if (seedMismatch) {
+      debugAttempt({ route: 'parameter-verification', schema: result.schema, model: settings().model, requested_seeds: requestedSeeds, image_metadata: metadata, seed_verified: false });
+      toast('warning', 'The provider ignored the requested seed. Check Request details or choose another NAI route.');
+    }
   } catch (error) {
     if (out) out.textContent = `Generation failed: ${error.message}`;
     toast('error', error.message);
   } finally {
     button?.removeAttribute('disabled');
+    button?.removeAttribute('aria-busy');
+    if (button && buttonHtml) button.innerHTML = buttonHtml;
   }
 }
 
@@ -1847,8 +2323,21 @@ const ngProviderCaps = {
   nativeGenerateUrl: '',
   encodeVibe: 'unknown',
   encodeVibeUrl: '',
+  nativeGenerateTested: false,
+  encodeVibeTested: false,
   checkedAt: '',
 };
+let ngCapabilitiesBase = '';
+let ngCapabilitiesKey = '';
+
+function ngCapabilitiesCurrent() {
+  return ngProviderCaps.checked && ngCapabilitiesBase === base() && ngCapabilitiesKey === apiKey;
+}
+
+function ngAdvancedCapabilityLabel(value, tested) {
+  if (value === 'supported') return tested ? 'Request succeeded' : 'API route detected; feature unverified';
+  return ngCapabilityLabel(value);
+}
 
 function ngCapabilityLabel(value) {
   if (value === 'direct') return 'Direct NovelAI API';
@@ -1871,8 +2360,9 @@ function ngRenderCapabilities() {
   }
   box.innerHTML = `<strong>Provider capabilities</strong><br>`
     + `Provider: ${esc(ngCapabilityLabel(ngProviderCaps.wrapper))}<br>`
-    + `NovelAI native generate: ${esc(ngCapabilityLabel(ngProviderCaps.nativeGenerate))}<br>`
-    + `V4/V4.5 vibe encoder: ${esc(ngCapabilityLabel(ngProviderCaps.encodeVibe))}`
+    + `NovelAI native generate: ${esc(ngAdvancedCapabilityLabel(ngProviderCaps.nativeGenerate, ngProviderCaps.nativeGenerateTested))}<br>`
+    + `V4/V4.5 vibe encoder: ${esc(ngAdvancedCapabilityLabel(ngProviderCaps.encodeVibe, ngProviderCaps.encodeVibeTested))}`
+    + '<br><small>Route discovery does not verify Inpaint or Precise Reference. Precise Reference requires V4.5 and a provider that forwards Director Reference fields.</small>'
     + (ngProviderCaps.checkedAt ? `<br><small>Checked ${esc(new Date(ngProviderCaps.checkedAt).toLocaleTimeString())}</small>` : '');
   box.classList.toggle('is-ok', (ngProviderCaps.wrapper === 'supported' || ngProviderCaps.wrapper === 'direct') && (ngProviderCaps.nativeGenerate === 'supported' || ngProviderCaps.encodeVibe === 'supported'));
   return true;
@@ -1906,23 +2396,32 @@ function ngProviderPathCandidates(path) {
 
 async function ngProbeAdvancedEndpoint(path) {
   let sawNetworkFailure = false;
+  const attempts = [];
   for (const url of ngProviderPathCandidates(path)) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6500);
     try {
-      const response = await fetch(url, {
+      const response = await ngProviderFetch(url, {
         method: 'POST',
         headers: headers(),
         body: '{}',
         signal: controller.signal,
       });
-      response.body?.cancel?.().catch?.(() => {});
       const statusCode = response.status;
+      const contentType = String(response.headers.get('content-type') || '').toLowerCase();
+      const raw = await response.text();
+      let data;
+      try { data = JSON.parse(raw); } catch { /* HTML and non-API responses are not route evidence. */ }
+      const jsonApi = data && typeof data === 'object' && !Array.isArray(data)
+        && !contentType.includes('text/html') && !/^\s*</.test(raw);
+      attempts.push({ url, status: statusCode, content_type: contentType, response: raw.slice(0, 250) });
       if (statusCode === 404) continue;
-      if (statusCode === 401 || statusCode === 403) return { state: 'blocked', url, status: statusCode };
-      if ([200, 400, 405, 415, 422].includes(statusCode)) return { state: 'supported', url, status: statusCode };
-      if (statusCode >= 500) continue;
-      return { state: 'supported', url, status: statusCode };
+      if (statusCode === 401 || statusCode === 403) return { state: 'blocked', url, status: statusCode, attempts };
+      if (jsonApi && [400, 415, 422].includes(statusCode)) return { state: 'supported', url, status: statusCode, attempts };
+      if (jsonApi && response.ok && (extractImages(data).length || data.encoded_vibe || data.encoded)) {
+        return { state: 'supported', url, status: statusCode, attempts };
+      }
+      if (statusCode >= 500 || statusCode === 429) sawNetworkFailure = true;
     } catch (error) {
       sawNetworkFailure = true;
       if (error?.name === 'AbortError') continue;
@@ -1930,10 +2429,15 @@ async function ngProbeAdvancedEndpoint(path) {
       clearTimeout(timer);
     }
   }
-  return { state: sawNetworkFailure ? 'unknown' : 'missing', url: '', status: 0 };
+  return { state: sawNetworkFailure ? 'unknown' : 'missing', url: '', status: 0, attempts };
 }
 
 async function ngProbeAdvancedCapabilities() {
+  const checkedBase = base();
+  const checkedKey = apiKey;
+  ngProviderCaps.checked = false;
+  ngProviderCaps.nativeGenerateTested = false;
+  ngProviderCaps.encodeVibeTested = false;
   ngProviderCaps.nativeGenerate = 'testing';
   ngProviderCaps.encodeVibe = 'testing';
   ngRenderCapabilities();
@@ -1941,11 +2445,14 @@ async function ngProbeAdvancedCapabilities() {
     ngProbeAdvancedEndpoint('/ai/generate-image'),
     ngProbeAdvancedEndpoint('/ai/encode-vibe'),
   ]);
+  if (checkedBase !== base() || checkedKey !== apiKey) return ngProviderCaps;
   ngProviderCaps.nativeGenerate = nativeGenerate.state;
   ngProviderCaps.nativeGenerateUrl = nativeGenerate.url;
   ngProviderCaps.encodeVibe = encodeVibe.state;
   ngProviderCaps.encodeVibeUrl = encodeVibe.url;
   ngProviderCaps.checked = true;
+  ngCapabilitiesBase = checkedBase;
+  ngCapabilitiesKey = checkedKey;
   ngProviderCaps.checkedAt = new Date().toISOString();
   ngRenderCapabilities();
   debugAttempt({
@@ -1965,6 +2472,8 @@ async function connectAndLoadModels() {
   const s = settings();
   if (!base()) return toast('warning', 'Enter a Base URL first.');
   if (!apiKey) return toast('warning', 'Enter an API key first.');
+  ngProviderCaps.checked = false;
+  unavailableAutoRoutes.clear();
   const button = document.getElementById('ng-connect');
   button?.setAttribute('disabled', 'disabled');
   status('Testing connection and loading models…', 'testing');
@@ -1994,21 +2503,25 @@ async function connectAndLoadModels() {
       }
       save();
       status(ngProviderCaps.encodeVibe === 'supported'
-        ? 'Connected directly to NovelAI. Native generation and Vibe Transfer are available.'
-        : 'Connected directly to NovelAI. Native generation is available; Vibe Transfer encoder was not confirmed.', 'ok');
+        ? 'Connected directly to NovelAI. Native generation and encoder routes detected; feature support depends on the selected model.'
+        : 'Connected directly to NovelAI. Native generation route detected; Vibe Transfer encoder was not confirmed.', 'ok');
       toast('success', ngProviderCaps.encodeVibe === 'supported'
-        ? 'Direct NovelAI connected with advanced image features.'
-        : 'Direct NovelAI connected. Vibe Transfer is unavailable on this endpoint.');
+        ? 'Direct NovelAI connected. Advanced API routes detected.'
+        : 'Direct NovelAI connected. Vibe Transfer encoder was not confirmed.');
       return;
     }
 
-    const response = await fetch(endpoint('/v1/models'), { headers: headers(), signal: controller.signal });
+    const response = await ngFetchModels({ headers: headers(), signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await errText(response)}`);
     models = modelIds(await response.json());
-    if (!models.length) throw new Error('Connected, but /v1/models returned no selectable model list.');
+    if (!models.length) {
+      const emptySelect = document.getElementById('ng-model');
+      if (emptySelect) { emptySelect.innerHTML = '<option>No NAI image models available</option>'; emptySelect.disabled = true; }
+      throw new Error('Connected, but this key exposes no NAI image models.');
+    }
     const select = document.getElementById('ng-model');
     select.innerHTML = models.map(model => `<option value="${attr(model)}">${esc(model)}</option>`).join('');
-    const preferred = models.includes(s.model) ? s.model : models.find(model => /nai.*4.?5.*full/i.test(model)) || models[0];
+    const preferred = models.includes(s.model) ? s.model : models.find(model => /nai.*5[-_. ]full/i.test(model) && !/4[-_. ]5/i.test(model)) || models.find(model => /nai.*4.?5.*full/i.test(model)) || models[0];
     s.model = preferred;
     select.value = preferred;
     select.disabled = false;
@@ -2094,6 +2607,7 @@ function ngBuildOpenAiWithNativeParameters(state) {
   const native = ngBuildNativeEnvelope(state);
   return cleanObject({
     ...strictPayload(state),
+    ...(ngIsPlainImageState(state) ? coreExtendedFields(state) : {}),
     input: native.input,
     action: native.action,
     parameters: native.parameters,
@@ -2108,6 +2622,7 @@ function ngBuildOpenAiWithNativeParameters(state) {
 function requestCandidates(state) {
   const s = settings();
   const strict = strictPayload(state);
+  if (ngUsesShopNativeChat(s.model)) return [{ name: 'rvl-shop-nai-native-chat', payload: strict }];
   if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
     return [{ name: 'rvl-compact-chat', payload: strict }];
   }
@@ -2262,7 +2777,7 @@ async function ngEncodeVibeReference(ref, signal) {
     information_extracted: information,
   };
   const started = performance.now();
-  const response = await fetch(url, {
+  const response = await ngProviderFetch(url, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(payload),
@@ -2304,7 +2819,7 @@ async function ngPostNativeGeneration(state, signal) {
   if (!url) throw new Error('The provider did not expose an /ai/generate-image route.');
   const payload = ngBuildNativeEnvelope(state);
   const started = performance.now();
-  const response = await fetch(url, {
+  const response = await ngProviderFetch(url, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(payload),
@@ -2316,9 +2831,11 @@ async function ngPostNativeGeneration(state, signal) {
     throw Object.assign(new Error(`Native NovelAI route failed: HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
   }
   const parsed = await ngNativeResponseImages(response);
-  debugAttempt({ route: 'native', schema: 'nai-native-route', status: response.status, ms: Math.round(performance.now() - started), payload: safePayloadForDebug(payload), response: parsed.debug, reference_consumption: hasAdvancedReferences(state) ? 'native-route' : 'not-applicable' });
+  debugAttempt({ route: 'native', schema: 'nai-native-route', status: response.status, ms: Math.round(performance.now() - started), payload: safePayloadForDebug(payload), response: parsed.debug, reference_consumption: hasAdvancedReferences(state) ? (isDirectNovelAI() ? 'native-route' : 'unverified-proxy-native') : 'not-applicable' });
   if (!parsed.images.length) throw Object.assign(new Error('Native NovelAI route returned success but no image could be decoded.'), { status: 200 });
-  return { images: parsed.images, data: parsed.debug, schema: 'nai-native-route', route: 'native', referenceVerified: hasAdvancedReferences(state) };
+  ngProviderCaps.nativeGenerateTested = true;
+  ngRenderCapabilities();
+  return { images: parsed.images, data: parsed.debug, schema: 'nai-native-route', route: 'native', referenceVerified: isDirectNovelAI() && hasAdvancedReferences(state), requestSeed: payload.parameters.seed };
 }
 
 // OpenAI-wrapper success no longer fails because `usage.image_tokens` is zero.
@@ -2329,12 +2846,18 @@ async function postGeneration(route, candidate, state, signal) {
   const body = route === 'chat' ? chatPayloadFrom(candidate.payload, state) : candidate.payload;
   const url = endpoint(path);
   const started = performance.now();
-  const response = await fetch(url, {
+  const response = await ngProviderFetch(url, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
     signal,
   });
+  if (response.ok && ngUsesShopNativeChat()) {
+    const parsed = await ngNativeResponseImages(response);
+    debugAttempt({ route, schema: candidate.name, status: response.status, ms: Math.round(performance.now() - started), payload: safePayloadForDebug(body), response: parsed.debug, reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable' });
+    if (!parsed.images.length) throw Object.assign(new Error('Native chat wrapper returned success without an image.'), { status: 200 });
+    return { images: parsed.images, data: parsed.debug, schema: candidate.name, route, referenceVerified: false, requestSeed: body.parameters.seed };
+  }
   const raw = await response.text();
   let data = null;
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
@@ -2353,7 +2876,7 @@ async function postGeneration(route, candidate, state, signal) {
   }
   const images = extractImages(data);
   if (!images.length) throw Object.assign(new Error('Provider returned success but no image URL/base64 was found in the response.'), { status: 200 });
-  return { images, data, schema: candidate.name, route, referenceVerified: false };
+  return { images, data, schema: candidate.name, route, referenceVerified: false, requestSeed: Number(state.seed) };
 }
 
 async function ngGenerateRvlExact(state, signal) {
@@ -2387,30 +2910,54 @@ async function ngGenerateRvlExact(state, signal) {
   };
 }
 
+async function ngGenerateParameterChatImages(state, signal) {
+  const count = Math.max(1, Math.min(4, Math.round(Number(state.n) || 1)));
+  const images = [];
+  const seeds = [];
+  let lastResult;
+  for (let index = 0; index < count; index += 1) {
+    const requestState = { ...state, n: 1 };
+    lastResult = await postGeneration('chat', {
+      name: ngIsRvlShop() ? 'rvl-shop-nai-chat-parameters' : 'xfx-nai-chat-parameters', payload: { model: settings().model },
+    }, requestState, signal);
+    images.push(...lastResult.images.slice(0, 1));
+    seeds.push(ngRvlChatSeed(requestState));
+  }
+  return { ...lastResult, images, seeds };
+}
+
 async function generateState(state, label = 'Generating…') {
   ngRvlRequestSeeds.delete(state);
   const s = settings();
   if (!base()) throw new Error('Set Base URL in the Novel Generation drawer first.');
   if (!apiKey) throw new Error('Enter and test the API key first.');
   if (!s.model) throw new Error('Select a model first.');
+  if (!ngIsNaiImageModel(s.model)) throw new Error('Select a NAI image model first.');
   if (!state.prompt?.trim()) throw new Error('Enter a prompt first.');
   if (state.vibes?.length && state.precise?.length) throw new Error('NovelAI V4.5 does not allow Vibe Transfer and Precise Reference at the same time. Remove one reference type.');
   if (state.precise?.length && !/4[-_. ]?5/i.test(String(s.model))) throw new Error('Precise Reference requires a NovelAI V4.5 model.');
   if (state.editMode === 'inpaint' && state.source && !state.mask) updateMaskFromCanvas();
   if (state.editMode === 'inpaint' && state.source && !state.mask) throw new Error('Paint an inpaint mask before generating.');
+  if (state.editMode === 'inpaint' && !state.source) throw new Error('Choose a source image before inpainting.');
 
   const controller = new AbortController();
-  const rvlRequestCount = ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source
+  const sequentialRequestCount = (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source)
+    || (ngUsesParameterChatImageRoute(s.model) && ngIsPlainImageState(state))
     ? Math.max(1, Math.min(10, Math.round(Number(state.n) || 1)))
     : 1;
-  const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs) * rvlRequestCount);
+  const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs) * sequentialRequestCount);
   const failures = [];
   try {
     if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
       return await ngGenerateRvlExact(state, controller.signal);
     }
+    if (ngUsesParameterChatImageRoute(s.model) && ngIsPlainImageState(state)) {
+      return await ngGenerateParameterChatImages(state, controller.signal);
+    }
 
-    if (!ngProviderCaps.checked) {
+    state = await ngPrepareAdvancedImages({ ...state, seed: ngGenerationSeed(state.seed) }, controller.signal);
+
+    if (!ngCapabilitiesCurrent()) {
       try { await ngProbeAdvancedCapabilities(); } catch (error) { console.debug('[Novel Generation] capability probe before generation failed', error); }
     }
 
@@ -2441,13 +2988,13 @@ async function generateState(state, label = 'Generating…') {
         return await ngPostNativeGeneration(state, controller.signal);
       } catch (error) {
         failures.push(`native/nai-native-route: ${error.message}`);
-        if (error.name === 'AbortError') throw error;
+        if (error.name === 'AbortError' || error.name === 'TypeError') throw error;
         if (error.status === 401 || error.status === 403) throw error;
       }
     }
 
     const candidates = requestCandidates(state);
-    const routes = routeCandidates().filter(route => s.routeMode !== 'auto' || !unavailableAutoRoutes.has(route));
+    const routes = routeCandidates().filter(route => s.routeMode !== 'auto' || !unavailableAutoRoutes.has(ngUnavailableRouteKey(route)));
     for (const route of routes) {
       if (route === 'chat' && (hasAdvancedReferences(state) || state.source)) continue;
       for (const candidate of candidates) {
@@ -2455,16 +3002,16 @@ async function generateState(state, label = 'Generating…') {
           return await postGeneration(route, candidate, state, controller.signal);
         } catch (error) {
           failures.push(`${route}/${candidate.name}: ${error.message}`);
-          if (error.name === 'AbortError') throw error;
+          if (error.name === 'AbortError' || error.name === 'TypeError') throw error;
           if (error.status === 401 || error.status === 403) throw error;
           // A missing endpoint is independent of payload schema. In Auto mode,
           // do not submit the same generation two more times to the same 404
           // route; remember it for this page session and proceed to chat.
           if (error.status === 404 && s.routeMode === 'auto') {
-            unavailableAutoRoutes.add(route);
+            unavailableAutoRoutes.add(ngUnavailableRouteKey(route));
             break;
           }
-          if (error.status === 200) continue;
+          if (error.status === 200 || error.status >= 429) throw error;
         }
       }
     }
@@ -2474,6 +3021,9 @@ async function generateState(state, label = 'Generating…') {
 
   if (hasAdvancedReferences(state)) {
     throw new Error(`Advanced reference generation failed. Open Request Debug and send the newest attempts. Last error: ${failures.at(-1) || 'unknown'}`);
+  }
+  if (state.source) {
+    throw new Error(`Image editing requires a NovelAI native route or an image wrapper that forwards action, image and mask. A chat image route alone does not confirm Inpaint support. Last error: ${failures.at(-1) || 'no compatible editing route'}`);
   }
   throw new Error(failures.at(-1) || label);
 }
@@ -2573,7 +3123,7 @@ async function tryDedicatedUpscale(source, mode, width, height) {
   const payload = cleanObject({ model: s.model, image: imageValue(source), factor: mode === '4k' ? 4 : 2, scale: mode === '4k' ? 4 : 2, width, height, response_format: s.responseFormat });
   try {
     for (const path of ['/v1/images/upscale', '/v1/images/upscales']) {
-      const response = await fetch(endpoint(path), { method: 'POST', headers: headers(), body: JSON.stringify(payload), signal: controller.signal });
+      const response = await ngProviderFetch(endpoint(path), { method: 'POST', headers: headers(), body: JSON.stringify(payload), signal: controller.signal });
       const raw = await response.text();
       let data = {};
       try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
@@ -4670,6 +5220,9 @@ ngProviderPathCandidates = function (path) {
 };
 
 function ngConsolidatedReadVibeResponse(response, contentType) {
+  if (contentType.includes('text/html') || contentType.includes('text/plain')) {
+    throw new Error('The encoder returned a web page or text instead of an encoded Vibe vector.');
+  }
   if (contentType.includes('application/json') || contentType.includes('text/json')) {
     return response.json().then(function (data) {
       return {
@@ -4712,7 +5265,7 @@ async function ngConsolidatedEncodeVibeReference(ref, signal) {
     for (const payload of payloads) {
       const started = performance.now();
       try {
-        const response = await fetch(url, {
+        const response = await ngProviderFetch(url, {
           method: 'POST',
           headers: headers(),
           body: JSON.stringify(payload),
@@ -4739,6 +5292,8 @@ async function ngConsolidatedEncodeVibeReference(ref, signal) {
         }
         ref.encodedVibe = parsed.encoded;
         ref.encodedVibeInformation = information;
+        ngProviderCaps.encodeVibeTested = true;
+        ngRenderCapabilities();
         debugAttempt({
           route: 'native-encode-vibe',
           schema: 'nai-encode-vibe',
@@ -4819,7 +5374,7 @@ requestCandidates = function (state) {
 var ngConsolidatedBaseGenerateState = generateState;
 generateState = async function (state, label) {
   if (state?.vibes?.length) {
-    if (!ngProviderCaps.checked) {
+    if (!ngCapabilitiesCurrent()) {
       try { await ngProbeAdvancedCapabilities(); } catch (error) {
         throw new Error('Vibe Transfer capability check failed: ' + (error?.message || error));
       }
@@ -4994,7 +5549,7 @@ function ngV067ComposeArtistPrompt(prompt, enabled) {
 
 function ngV067EffectivePrompt(prompt) {
   var prefs = ngV067ArtistPrefs();
-  var effective = ngV067ComposeArtistPrompt(prompt, prefs.artistMixEnabled !== false);
+  var effective = ngComposeVisualStyle(ngV067ComposeArtistPrompt(prompt, prefs.artistMixEnabled !== false), studio?.visualStyle || settings().image.visualStyle || 'none');
   var image = settings().image || {};
   return [image.prefix, effective, image.suffix]
     .map(function (part) { return String(part || '').trim(); })
@@ -5204,7 +5759,7 @@ generateState = async function (state, label) {
   var originalPrompt = state?.prompt;
   if (state && typeof originalPrompt === 'string') {
     var enabled = state.artistMixEnabled !== false && ngV067ArtistPrefs().artistMixEnabled !== false;
-    state.prompt = ngV067ComposeArtistPrompt(originalPrompt, enabled);
+    state.prompt = ngComposeVisualStyle(ngV067ComposeArtistPrompt(originalPrompt, enabled), state.visualStyle || 'none');
   }
   try {
     return await ngV067BaseGenerateState(state, label);
