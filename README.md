@@ -22,6 +22,12 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 
 `https://github.com/DesZiDesu/novel-generation`
 
+### Updating without clearing browser data
+
+The 0.8.1 manifest loads `index.js?v=0.8.1` and `style.css?v=0.8.1`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
+
+The cache regression test is `CHROMIUM_PATH=/usr/bin/chromium node tests/cached-update.cjs`, or `BROWSER=webkit node tests/cached-update.cjs`, against an isolated SillyTavern installation. It warms the browser's real HTTP cache with a 0.8.0 fixture, publishes the current manifest, then verifies the current Studio loads while old cached assets and saved state remain available. The fixture serves manifests without caching so the test isolates stale JavaScript/CSS; a host that also serves a stale manifest must update/revalidate that metadata.
+
 ## Current scope
 
 ### Studio 0.8
