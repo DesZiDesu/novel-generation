@@ -9,6 +9,7 @@
 #ng-settings .inline-drawer-header { cursor: pointer; }
 #ng-settings .inline-drawer-header b { display: inline-flex; align-items: center; gap: 7px; }
 #ng-settings .ng-version { opacity: .6; font-size: .78em; font-weight: 600; }
+#ng-settings #ng-connect { display: flex; align-items: center; justify-content: center; gap: 8px; width: 100%; min-height: 44px; white-space: normal; text-align: center; }
 
 .ng-settings-copy,
 .ng-muted,
@@ -1579,6 +1580,7 @@ body.ng-image-viewer-open {
 #ng-studio-overlay .ng-connect-button { width: 100%; color: var(--ng-accent-soft); background: var(--ng-accent-bg); border-color: #4a4a4a; }
 #ng-studio-overlay #ng-studio-connection-status { display: block; margin-top: 9px; overflow-wrap: anywhere; }
 #ng-studio-overlay #ng-prompt { min-height: 142px; }
+#ng-studio-overlay textarea.text_pole { display: block; resize: vertical; line-height: 1.5; color: #eeeeee; -webkit-text-fill-color: #eeeeee; background: var(--ng-input); border: 1px solid #3d3d3d; }
 #ng-studio-overlay .ng-weight-hint { display: none; }
 #ng-studio-overlay .ng-negative-heading { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin: 15px 0 8px; }
 #ng-studio-overlay .ng-negative-heading > span { color: #bfbfbf; font-size: 11px; }

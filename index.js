@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.8.0';
+const VERSION = '0.8.1';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -501,25 +501,79 @@ const headers = () => ({ 'Content-Type': 'application/json', Accept: 'applicatio
 
 // Resolve CORS transport with the read-only model request. Generation requests
 // use that choice once; retrying a failed POST could generate and bill twice.
-function ngProviderFetch(url, options) {
-  const useServer = settings().corsProxyBaseUrl === base()
-    && new URL(url).origin === new URL(base()).origin;
-  return fetch(useServer ? `/proxy/${url}` : url, options);
+function ngProviderFetch(url, options = {}) {
+  if (new URL(url).origin === new URL(base()).origin) {
+    if (settings().serverBridgeBaseUrl === base()) return ngServerBridgeFetch(url, options);
+    if (settings().corsProxyBaseUrl === base()) return fetch(`/proxy/${url}`, options);
+  }
+  return fetch(url, options);
 }
 
-async function ngFetchModels(options) {
-  const url = endpoint('/v1/models');
-  try {
-    return await ngProviderFetch(url, options);
-  } catch (error) {
-    if (error.name !== 'TypeError' || options.signal?.aborted || settings().corsProxyBaseUrl === base()) throw error;
-    const response = await fetch(`/proxy/${url}`, options);
-    if (response.status === 404 && /CORS proxy is disabled/i.test(await response.clone().text())) {
-      throw new Error('This API blocks browser CORS. Enable enableCorsProxy: true in SillyTavern config.yaml, restart SillyTavern, then reconnect.');
-    }
-    if (response.ok) settings().corsProxyBaseUrl = base();
-    return response;
+// SillyTavern's normal Custom API backend does not require enableCorsProxy.
+// Credentials belong to this request only; never replace the user's chat settings
+// or save the image key as SillyTavern's global Custom API secret.
+async function ngServerBridgeFetch(url, options = {}) {
+  const modelsUrl = endpoint('/v1/models');
+  const chatUrl = endpoint('/v1/chat/completions');
+  const method = (options.method || 'GET').toUpperCase();
+  const isModels = url === modelsUrl && method === 'GET';
+  const isChat = url === chatUrl && method === 'POST';
+  if (!isModels && !isChat) {
+    return Response.json({ error: { message: 'This route is unavailable through SillyTavern Custom API. This connection supports model discovery and chat image generation; native image, Inpaint and reference routes require provider CORS access or a server proxy.' } }, { status: 404 });
   }
+  const upstreamBase = modelsUrl.slice(0, -'/models'.length);
+  const authorization = new Headers(options.headers).get('Authorization');
+  const payload = isChat ? JSON.parse(options.body) : null;
+  if (payload?.stream) throw new Error('Image generation through SillyTavern requires a non-streaming response.');
+  const body = isModels ? {
+    chat_completion_source: 'openai', reverse_proxy: upstreamBase,
+    proxy_password: authorization?.replace(/^Bearer\s+/i, '') || '',
+  } : {
+    chat_completion_source: 'custom', custom_url: upstreamBase,
+    custom_include_headers: JSON.stringify(authorization ? { Authorization: authorization } : {}),
+    // JSON is valid YAML. Custom include preserves provider-specific parameters
+    // verbatim instead of letting the chat backend rebuild the image payload.
+    custom_include_body: JSON.stringify(payload),
+    custom_exclude_body: JSON.stringify('stream' in payload ? [] : ['stream']),
+    model: payload.model, messages: payload.messages, stream: false,
+  };
+  const response = await fetch(`/api/backends/chat-completions/${isModels ? 'status' : 'generate'}`, {
+    method: 'POST', headers: ctx().getRequestHeaders(), body: JSON.stringify(body), signal: options.signal,
+  });
+  if (!response.ok) return response;
+  const data = await response.clone().json();
+  // ST can wrap upstream errors in HTTP 200. Never interpret them as successful
+  // images, or retry a paid generation after the backend has already sent it.
+  if (data?.error) return Response.json({ error: { message: isModels
+    ? 'SillyTavern could not load provider models. Check the Base URL, API key and server connection.'
+    : data.error?.message || 'The provider rejected image generation through SillyTavern.' } }, { status: 502 });
+  return response;
+}
+
+async function ngFetchModels(options = {}) {
+  const url = endpoint('/v1/models');
+  if (settings().serverBridgeBaseUrl === base()) return ngServerBridgeFetch(url, options);
+  let response;
+  try {
+    response = await ngProviderFetch(url, options);
+    // Recover a saved /proxy transport when the hosted server has disabled it.
+    if (!(response.status === 404 && /CORS proxy is disabled/i.test(await response.clone().text()))) return response;
+  } catch (error) {
+    if (error.name !== 'TypeError' || options.signal?.aborted) throw error;
+    if (settings().corsProxyBaseUrl !== base()) {
+      response = await fetch(`/proxy/${url}`, options);
+      if (!(response.status === 404 && /CORS proxy is disabled/i.test(await response.clone().text()))) {
+        if (response.ok) settings().corsProxyBaseUrl = base();
+        return response;
+      }
+    }
+  }
+  response = await ngServerBridgeFetch(url, options);
+  if (response.ok) {
+    settings().serverBridgeBaseUrl = base();
+    delete settings().corsProxyBaseUrl;
+  }
+  return response;
 }
 
 async function errText(response) {
@@ -679,8 +733,8 @@ function ngBindStudioDesign() {
     save();
   });
   root.querySelector('#ng-studio-api-key')?.addEventListener('input', event => {
-    apiKey = event.currentTarget.value;
     const s = settings();
+    apiKey = event.currentTarget.value;
     if (s.provider === 'proxy') { s.proxyApiKey = apiKey; s.apiKey = apiKey; }
     ngProviderCaps.checked = false;
     models = [];
@@ -1100,7 +1154,12 @@ function openStudio(mode = 'free', focus = 'prompt') {
       const target = overlay.querySelector(`[data-focus="${focus}"]`);
       if (target) {
         target.open = true;
-        setTimeout(() => target.isConnected && target.scrollIntoView({ block: 'nearest' }), 30);
+        // Normal opening starts at the model/connection card. Explicit tools
+        // scroll only the controls pane, leaving the header and page in place.
+        if (focus !== 'prompt') setTimeout(() => {
+          const controls = overlay.querySelector('.ng-studio-controls');
+          if (target.isConnected && controls) controls.scrollTop += target.getBoundingClientRect().top - controls.getBoundingClientRect().top;
+        }, 30);
       }
     }
     escapeHandler = event => { if (event.key === 'Escape') closeStudio(); };
@@ -2531,7 +2590,9 @@ async function connectAndLoadModels() {
     ngRenderCapabilities();
     await ngProbeAdvancedCapabilities();
     const advanced = ngProviderCaps.nativeGenerate === 'supported' || ngProviderCaps.encodeVibe === 'supported';
-    status(advanced
+    status(settings().serverBridgeBaseUrl === base()
+      ? `Connected via SillyTavern. ${models.length} NAI models available. Chat image generation needs no server configuration; native routes are unavailable on this connection.`
+      : advanced
       ? `Connected. ${models.length} model${models.length === 1 ? '' : 's'} available. Advanced NovelAI route(s) detected.`
       : `Connected. ${models.length} model${models.length === 1 ? '' : 's'} available. Advanced native routes were not confirmed.`, 'ok');
     toast('success', advanced ? 'Connected. Advanced NovelAI capability detected.' : 'Connected. Basic image generation is available.');
@@ -4712,8 +4773,8 @@ function ngV053AttachWeightedEditor(textarea) {
 }
 
 function ngV053RefreshWeightedEditors() {
-  document.querySelectorAll('#ng-studio-overlay textarea.text_pole').forEach(ngV053AttachWeightedEditor);
-  document.querySelectorAll('#ng-studio-overlay textarea.ng-weight-textarea').forEach(ngV053SyncEditor);
+  // Native textareas keep their border, scrolling, cursor and selection on iOS.
+  // Weight syntax still reaches the provider unchanged; no mirrored text layer.
 }
 
 function ngV053SetVersionLabels() {
@@ -4805,12 +4866,9 @@ function ngV055SetMobilePane(mode) {
   var next = mode === 'preview' ? 'preview' : 'controls';
   overlay.dataset.ngMobilePane = next;
   if (next === 'preview') {
-    overlay.querySelectorAll('.ng-studio-controls details.ng-studio-section[open]').forEach(function (details) { details.open = false; });
     try { document.activeElement?.blur?.(); } catch {}
   }
   ngV055SyncMobileNav();
-  var scroller = next === 'preview' ? document.getElementById('ng-preview') : overlay.querySelector('.ng-studio-controls');
-  if (scroller) scroller.scrollTop = 0;
 }
 
 function ngV055InjectMobileNav() {

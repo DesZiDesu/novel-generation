@@ -1,4 +1,4 @@
-const { chromium } = require('playwright');
+const { chromium, webkit } = require('playwright');
 const assert = require('node:assert/strict');
 const fs = require('node:fs');
 const path = require('node:path');
@@ -11,7 +11,8 @@ const artifactDir = process.env.ARTIFACT_DIR || path.join(os.tmpdir(), 'novel-ge
 fs.mkdirSync(artifactDir, { recursive: true });
 
 (async () => {
-  const browser = await chromium.launch({ ...(process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}), headless: true, args: process.getuid?.() === 0 ? ['--no-sandbox'] : [] });
+  const engine = process.env.BROWSER === 'webkit' ? webkit : chromium;
+  const browser = await engine.launch({ ...(engine === chromium && process.env.CHROMIUM_PATH ? { executablePath: process.env.CHROMIUM_PATH } : {}), headless: true, args: engine === chromium && process.getuid?.() === 0 ? ['--no-sandbox'] : [] });
   const report = [];
   try {
     for (const mobile of [false, true]) {
@@ -45,6 +46,12 @@ fs.mkdirSync(artifactDir, { recursive: true });
       const root = page.locator('#ng-studio-overlay');
       await root.waitFor({ state: 'visible' });
       await page.waitForTimeout(300);
+      const opening = await root.evaluate(n => {
+        const controls = n.querySelector('.ng-studio-controls');
+        return { scrollTop: controls.scrollTop, modelTop: n.querySelector('.ng-studio-model-card').getBoundingClientRect().top, controlsTop: controls.getBoundingClientRect().top };
+      });
+      assert.equal(opening.scrollTop, 0, 'opening must keep model/API controls visible');
+      assert.ok(opening.modelTop >= opening.controlsTop, JSON.stringify(opening));
       const connection = root.locator('[data-focus="connection"]');
       if (!await connection.evaluate(n => n.open)) await connection.locator('summary').click();
       await root.locator('#ng-studio-base').fill('https://new.xfxai.top/v1');
@@ -81,6 +88,24 @@ fs.mkdirSync(artifactDir, { recursive: true });
       if (!await prompt.evaluate(n => n.open)) await prompt.locator('summary').click();
       await root.locator('#ng-prompt').fill('portrait of an adult traveler, brown eyes, round pupils, soft natural lighting');
       await root.locator('#ng-negative').fill('spiral eyes, @_@, mismatched pupils');
+      await root.locator('#ng-prompt').blur();
+      const editor = await root.locator('#ng-prompt').evaluate(n => {
+        const s = getComputedStyle(n);
+        return { mirror: !!n.closest('.ng-weight-editor'), background: s.backgroundColor, text: s.webkitTextFillColor, border: s.borderTopWidth, height: n.getBoundingClientRect().height };
+      });
+      assert.equal(editor.mirror, false, 'use native selection/scrolling instead of transparent mirrored text');
+      assert.notEqual(editor.background, 'rgba(0, 0, 0, 0)');
+      assert.notEqual(editor.text, 'rgba(0, 0, 0, 0)');
+      assert.equal(editor.border, '1px');
+      assert.ok(editor.height >= 140 && editor.height < 240, JSON.stringify(editor));
+      if (mobile) {
+        await root.locator('.ng-studio-controls').evaluate(n => n.scrollTop = 200);
+        const position = await root.locator('.ng-studio-controls').evaluate(n => n.scrollTop);
+        await root.locator('.ng-v055-mobile-nav [data-mobile-pane="preview"]').click();
+        await root.locator('.ng-v055-mobile-nav [data-tab="generate"]').click();
+        assert.equal(await prompt.evaluate(n => n.open), true);
+        assert.equal(await root.locator('.ng-studio-controls').evaluate(n => n.scrollTop), position);
+      }
       await root.locator('#ng-studio-uc').selectOption('human');
       const style = root.locator('[data-focus="style"]');
       if (!await style.evaluate(n => n.open)) await style.locator('summary').click();
@@ -156,6 +181,8 @@ fs.mkdirSync(artifactDir, { recursive: true });
       await root.locator('#ng-close').click();
       await page.evaluate(() => document.getElementById('ng-v051-open-studio').click());
       await root.waitFor();
+      await page.waitForTimeout(100);
+      assert.equal(await root.locator('.ng-studio-controls').evaluate(n => n.scrollTop), 0);
       assert.equal(await root.locator('#ng-prompt').inputValue(), 'portrait of an adult traveler, brown eyes, round pupils, soft natural lighting');
       assert.equal(Number(await root.locator('#ng-studio-seed').inputValue()), usedSeed);
       assert.equal(await root.locator('[data-ng-style="anime"]').getAttribute('aria-pressed'), 'true');
@@ -163,6 +190,8 @@ fs.mkdirSync(artifactDir, { recursive: true });
       if (!await openConnection.evaluate(n => n.open)) await openConnection.locator('summary').click();
       await root.locator('#ng-studio-api-key').fill('');
       await root.locator('#ng-close').click();
+      assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.apiKey), '');
+      assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.proxyApiKey), '');
       assert.deepEqual(errors, []);
       report.push({ device: mobile ? 'mobile 390×844' : 'PC 1440×1000', models: 3, generationRequests: requests.length, seedControls: 'passed', quickAutoFixed: 'passed (keyboard, model scope and Auto/Fixed persistence)', squareTouchControls: 'passed at desktop, tablet, 320px mobile and landscape', reuseSeed: 'passed', persistence: 'passed', layout: dimension, browserErrors: errors });
       await page.close();
