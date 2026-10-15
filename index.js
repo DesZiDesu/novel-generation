@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.7.14';
+const VERSION = '0.8.0';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -35,7 +35,7 @@ const DEFAULTS = {
   apiKey: '',
   proxyBaseUrl: '',
   proxyApiKey: '',
-  model: 'nai-diffusion-4-5-full',
+  model: 'nai-diffusion-5-full',
   responseFormat: 'b64_json',
   compatibility: 'auto',
   routeMode: 'auto',
@@ -171,6 +171,8 @@ function ngUpdateCanvasStatus(prefix, image) {
   if (!node || !image) return;
   const resolved = ngResolveCanvasSize(image);
   node.textContent = `Canvas sent to the image model: ${resolved.width} × ${resolved.height} · ${resolved.orientation}`;
+  const stage = prefix === 'ng-studio' && document.getElementById('ng-stage-size');
+  if (stage) stage.textContent = `${resolved.width} × ${resolved.height}`;
 }
 
 function settings() {
@@ -272,7 +274,7 @@ function settingsHtml() {
       ${field('Guidance', `<input id="ng-guidance" class="text_pole" type="number" min="0" max="30" step="0.1" value="${s.image.guidance}">`)}
       ${field('Sampler', `<select id="ng-sampler" class="text_pole"><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_euler">Euler</option><option value="k_dpmpp_sde">DPM++ SDE</option></select>`)}
       ${field('Scheduler', `<select id="ng-scheduler" class="text_pole"><option value="native">Provider default</option><option value="karras">Karras</option><option value="exponential">Exponential</option></select>`)}
-      ${field('Seed', `<input id="ng-seed" class="text_pole" type="number" value="${s.image.seed}">`)}
+      ${field('Seed', ngSeedControl('ng-seed', s.image.seed))}
       ${field('Images', `<input id="ng-n" class="text_pole" type="number" min="1" max="4" value="${s.image.n}">`)}
     </div>`;
 
@@ -394,7 +396,7 @@ function bindSettings() {
   bind('ng-format', el => s.responseFormat = el.value, 'change');
   bind('ng-compat', el => s.compatibility = el.value, 'change');
   bind('ng-route', el => s.routeMode = el.value, 'change');
-  bind('ng-model', el => { s.model = el.value; refreshReferenceLocks(); }, 'change');
+  bind('ng-model', el => { s.model = el.value; refreshReferenceLocks(); ngSyncStudioConnection(); }, 'change');
   bind('ng-timeout', el => s.timeoutMs = +el.value || 120000);
   bind('ng-steps', el => s.image.steps = +el.value || 28);
   bind('ng-guidance', el => s.image.guidance = +el.value || 5);
@@ -447,6 +449,7 @@ function bindSettings() {
   if (sampler) sampler.value = s.image.sampler;
   if (scheduler) scheduler.value = s.image.scheduler;
   bindDrawer();
+  ngBindSeedControls(document.getElementById('ng-settings') || document);
 }
 
 function setSize(target, preset) {
@@ -489,7 +492,219 @@ async function errText(response) {
 
 function modelIds(data) {
   const source = Array.isArray(data?.data) ? data.data : Array.isArray(data?.models) ? data.models : [];
-  return [...new Set(source.map(item => typeof item === 'string' ? item : item?.id || item?.name).filter(Boolean))];
+  return [...new Set(source.map(item => typeof item === 'string' ? item : item?.id || item?.name).filter(ngIsNaiImageModel))];
+}
+
+function ngIsNaiImageModel(model) {
+  return /(?:^|[^a-z0-9])(?:nai|novelai)(?:[\s._-]*(?:diffusion|image|full|curated|furry|v?\d)|$)/i.test(String(model || '').trim());
+}
+
+function ngModelLabel(model) {
+  const raw = String(model || '');
+  const match = raw.match(/nai-diffusion-(5|4-5|4|3|2)(?:-(full|curated(?:-preview)?))?/i);
+  if (!match) return raw;
+  const variant = match[2] ? ` · ${match[2].replace('-preview', ' preview').replace(/^./, value => value.toUpperCase())}` : '';
+  const prefix = raw.match(/^\[[^\]]+\]/)?.[0];
+  return `${prefix ? `${prefix} ` : ''}NAI ${match[1].replace('-', '.')}${variant}`;
+}
+
+function ngIsNai5Model(model = settings().model) {
+  return /(?:nai(?:[-_ .]*diffusion)?|novelai)[-_ .]*v?5(?:[^0-9]|$)/i.test(String(model || ''));
+}
+
+function ngNewSeed(previous) {
+  let value = 100000 + ngGenerationSeed(-1) % 900000;
+  if (value === Number(previous)) value = value === 999999 ? 100000 : value + 1;
+  return value;
+}
+
+function ngSeedControl(id, value) {
+  return `<div class="ng-seed-control"><input id="${id}" class="text_pole" type="number" min="-1" max="4294967295" step="1" value="${Number(value)}" aria-label="Seed"><button class="menu_button ng-seed-shuffle" type="button" data-ng-seed-target="${id}" aria-label="New random seed" title="Choose a new seed"><i class="fa-solid fa-dice"></i><span>New seed</span></button><button class="menu_button ng-seed-auto ${Number(value) < 0 ? 'is-active' : ''}" type="button" data-ng-seed-auto="${id}" aria-label="Use a fresh seed for every generation" aria-pressed="${Number(value) < 0}"><i class="fa-solid fa-shuffle"></i><span>Auto</span></button></div>`;
+}
+
+function ngBindSeedControls(root = document) {
+  root.querySelectorAll('[data-ng-seed-target],[data-ng-seed-auto]').forEach(button => {
+    if (button.dataset.ngSeedBound) return;
+    button.dataset.ngSeedBound = 'true';
+    button.addEventListener('click', () => {
+      const input = document.getElementById(button.dataset.ngSeedTarget || button.dataset.ngSeedAuto);
+      if (!input) return;
+      input.value = button.dataset.ngSeedAuto ? -1 : ngNewSeed(input.value);
+      input.dispatchEvent(new Event('input', { bubbles: true }));
+      input.dispatchEvent(new Event('change', { bubbles: true }));
+      ngSyncSeedControls(root);
+    });
+  });
+  ngSyncSeedControls(root);
+}
+
+function ngSyncSeedControls(root = document) {
+  root.querySelectorAll('[data-ng-seed-auto]').forEach(button => {
+    const active = Number(document.getElementById(button.dataset.ngSeedAuto)?.value) < 0;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const input = document.getElementById('ng-studio-seed');
+  const footer = root.querySelector?.('.ng-quick-seed');
+  if (!input || !footer) return;
+  const automatic = Number(input.value) < 0;
+  if (!automatic && studio) studio.fixedSeed = Number(input.value);
+  footer.querySelectorAll('[data-ng-seed-mode]').forEach(button => {
+    const active = (button.dataset.ngSeedMode === 'auto') === automatic;
+    button.classList.toggle('is-active', active);
+    button.setAttribute('aria-pressed', String(active));
+  });
+  const mode = footer.querySelector('.ng-quick-seed-modes');
+  if (mode) mode.hidden = !ngIsNai5Model();
+  const value = footer.querySelector('#ng-quick-seed-value');
+  const label = automatic ? 'Every image' : String(input.value);
+  if (value && value.textContent !== label) value.textContent = label;
+  const status = footer.querySelector('#ng-seed-mode-status');
+  const announcement = automatic ? 'Auto seed for NAI 5: a new seed will be chosen for each image.' : `Fixed seed: ${input.value}.`;
+  if (status && status.textContent !== announcement) status.textContent = announcement;
+}
+
+function ngComposeVisualStyle(prompt, selected) {
+  const tags = NG_STUDIO_STYLES[selected]?.tags;
+  return tags ? `${String(prompt || '').trim()}, ${tags}` : String(prompt || '').trim();
+}
+
+function ngSyncStudioConnection() {
+  const select = document.getElementById('ng-studio-model');
+  if (!select) return;
+  const s = settings();
+  select.innerHTML = ngStudioModelOptions();
+  select.disabled = !models.length;
+  const modelId = document.getElementById('ng-studio-model-id');
+  if (modelId) modelId.textContent = s.model;
+  const badge = document.getElementById('ng-studio-connection-badge');
+  if (badge) {
+    const connected = Boolean(models.length && apiKey);
+    badge.classList.toggle('is-connected', connected);
+    badge.innerHTML = `<span></span>${connected ? 'API connected' : 'Connect your API'}`;
+  }
+  const key = document.getElementById('ng-studio-api-key');
+  const url = document.getElementById('ng-studio-base');
+  if (key && document.activeElement !== key) key.value = apiKey;
+  if (url) { if (document.activeElement !== url) url.value = base(); url.readOnly = isDirectNovelAI(); }
+  const uc = document.getElementById('ng-studio-uc');
+  if (uc) uc.value = s.image.negativePreset || 'none';
+  ngSyncSeedControls(document.getElementById('ng-studio-overlay'));
+  refreshReferenceLocks();
+}
+
+function ngBindStudioDesign() {
+  const root = document.getElementById('ng-studio-overlay');
+  if (!root || !studio) return;
+  ngBindSeedControls(root);
+  ngSyncStudioConnection();
+  root.querySelectorAll('[data-ng-seed-mode]').forEach(button => button.addEventListener('click', () => {
+    const input = document.getElementById('ng-studio-seed');
+    if (!input) return;
+    if (button.dataset.ngSeedMode === 'auto') {
+      if (Number(input.value) >= 0) studio.fixedSeed = Number(input.value);
+      input.value = -1;
+    } else if (Number(input.value) < 0) {
+      input.value = studio.lastSeeds[0] ?? studio.fixedSeed ?? ngNewSeed(-1);
+    }
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    input.dispatchEvent(new Event('change', { bubbles: true }));
+    ngSyncSeedControls(root);
+  }));
+  root.querySelector('#ng-studio-settings')?.addEventListener('click', () => openStudioSection('connection'));
+  root.querySelector('#ng-studio-model')?.addEventListener('change', event => {
+    settings().model = event.currentTarget.value;
+    const drawer = document.getElementById('ng-model');
+    if (drawer) drawer.value = settings().model;
+    ngSyncStudioConnection();
+    save();
+  });
+  root.querySelector('#ng-studio-provider')?.addEventListener('change', event => {
+    const drawer = document.getElementById('ng-provider');
+    if (drawer) { drawer.value = event.currentTarget.value; drawer.dispatchEvent(new Event('change', { bubbles: true })); }
+    ngSyncStudioConnection();
+  });
+  root.querySelector('#ng-studio-base')?.addEventListener('input', event => {
+    const s = settings();
+    s.baseUrl = event.currentTarget.value.trim();
+    if (s.provider === 'proxy') s.proxyBaseUrl = s.baseUrl;
+    ngProviderCaps.checked = false;
+    unavailableAutoRoutes.clear();
+    models = [];
+    const drawer = document.getElementById('ng-base-url');
+    if (drawer) drawer.value = s.baseUrl;
+    ngSyncStudioConnection();
+    save();
+  });
+  root.querySelector('#ng-studio-api-key')?.addEventListener('input', event => {
+    apiKey = event.currentTarget.value;
+    const s = settings();
+    if (s.provider === 'proxy') { s.proxyApiKey = apiKey; s.apiKey = apiKey; }
+    ngProviderCaps.checked = false;
+    models = [];
+    const drawer = document.getElementById('ng-api-key');
+    if (drawer) drawer.value = apiKey;
+    ngSyncStudioConnection();
+    save();
+  });
+  root.querySelector('#ng-studio-key-toggle')?.addEventListener('click', event => {
+    const key = document.getElementById('ng-studio-api-key');
+    if (!key) return;
+    key.type = key.type === 'password' ? 'text' : 'password';
+    event.currentTarget.setAttribute('aria-label', key.type === 'password' ? 'Show API key' : 'Hide API key');
+  });
+  root.querySelector('#ng-studio-connect')?.addEventListener('click', async event => {
+    const button = event.currentTarget;
+    button.disabled = true;
+    const message = document.getElementById('ng-studio-connection-status');
+    if (message) message.textContent = 'Connecting and loading NAI models…';
+    try {
+      await connectAndLoadModels();
+      ngSyncStudioConnection();
+      if (message) message.textContent = document.getElementById('ng-status')?.textContent || (models.length ? `${models.length} NAI models available` : 'No NAI models found. Check this key and Base URL.');
+    } finally { button.disabled = false; }
+  });
+  root.querySelector('#ng-studio-uc')?.addEventListener('change', event => {
+    settings().image.negativePreset = event.currentTarget.value;
+    const drawer = document.getElementById('ng-v051-uc');
+    if (drawer) drawer.value = event.currentTarget.value;
+    save();
+  });
+  root.querySelectorAll('[data-ng-style]').forEach(button => button.addEventListener('click', () => {
+    studio.visualStyle = button.dataset.ngStyle;
+    settings().image.visualStyle = studio.visualStyle;
+    root.querySelectorAll('[data-ng-style]').forEach(item => {
+      const active = item === button;
+      item.classList.toggle('is-active', active);
+      item.setAttribute('aria-pressed', String(active));
+    });
+    ngV067RefreshArtistMixUi();
+    save();
+  }));
+  [['ng-studio-seed', 'seed'], ['ng-studio-steps', 'steps'], ['ng-studio-guidance', 'guidance'], ['ng-studio-n', 'n'], ['ng-studio-sampler', 'sampler'], ['ng-studio-scheduler', 'scheduler']].forEach(([id, key]) => {
+    document.getElementById(id)?.addEventListener('input', () => {
+      settings().image[key] = studio[key];
+      if (key === 'seed' && Number(studio.seed) >= 0) settings().image.fixedSeed = Number(studio.seed);
+      const drawer = document.getElementById(id.replace('ng-studio-', 'ng-'));
+      if (drawer) drawer.value = studio[key];
+      ngSyncSeedControls(root);
+      save();
+    });
+  });
+  root.querySelector('#ng-reuse-seed')?.addEventListener('click', () => {
+    if (!studio.lastSeeds.length) return;
+    const input = document.getElementById('ng-studio-seed');
+    input.value = studio.lastSeeds[0];
+    input.dispatchEvent(new Event('input', { bubbles: true }));
+    ngSyncSeedControls(root);
+  });
+  root.addEventListener('keydown', event => {
+    if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') {
+      event.preventDefault();
+      const button = document.getElementById('ng-generate');
+      if (button && !button.disabled) generateStudio();
+    }
+  });
 }
 
 function status(text, state = '') {
@@ -513,10 +728,14 @@ async function connectAndLoadModels() {
     const response = await fetch(endpoint('/v1/models'), { headers: headers(), signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await errText(response)}`);
     models = modelIds(await response.json());
-    if (!models.length) throw new Error('Connected, but /v1/models returned no selectable model list.');
+    if (!models.length) {
+      const emptySelect = document.getElementById('ng-model');
+      if (emptySelect) { emptySelect.innerHTML = '<option>No NAI image models available</option>'; emptySelect.disabled = true; }
+      throw new Error('Connected, but this key exposes no NAI image models.');
+    }
     const select = document.getElementById('ng-model');
     select.innerHTML = models.map(model => `<option value="${attr(model)}">${esc(model)}</option>`).join('');
-    const preferred = models.includes(s.model) ? s.model : models.find(model => /nai.*4.?5.*full/i.test(model)) || models[0];
+    const preferred = models.includes(s.model) ? s.model : models.find(model => /nai.*5[-_. ]full/i.test(model) && !/4[-_. ]5/i.test(model)) || models.find(model => /nai.*4.?5.*full/i.test(model)) || models[0];
     s.model = preferred;
     select.value = preferred;
     select.disabled = false;
@@ -666,6 +885,7 @@ function newStudio(mode = 'free', focus = 'prompt') {
     sampler: defaults.sampler,
     scheduler: defaults.scheduler,
     seed: defaults.seed,
+    fixedSeed: defaults.fixedSeed,
     n: defaults.n,
     characters: [],
     vibes: [],
@@ -678,6 +898,8 @@ function newStudio(mode = 'free', focus = 'prompt') {
     noise: 0.1,
     maskTool: 'brush',
     brushSize: 48,
+    visualStyle: settings().image.visualStyle || 'none',
+    lastSeeds: [],
     generated: [],
   };
 }
@@ -692,36 +914,57 @@ function range(id, label, value, min = 0, max = 1, step = 0.01) {
   return `<label class="ng-range-row"><span>${label} <output>${Number(value).toFixed(2)}</output></span><input id="${id}" type="range" min="${min}" max="${max}" step="${step}" value="${value}"></label>`;
 }
 
+const NG_STUDIO_STYLES = {
+  none: { label: 'No preset', icon: 'fa-minus', description: 'Your own style', tags: '' },
+  anime: { label: 'Anime', icon: 'fa-star', description: 'Clean & vibrant', tags: 'anime style, clean lineart, vibrant colors' },
+  manhwa: { label: 'Manhwa', icon: 'fa-gem', description: 'Soft & cinematic', tags: 'semi-realistic anime, korean manhwa style, soft shading, cinematic lighting' },
+  painterly: { label: 'Painterly', icon: 'fa-palette', description: 'Light & texture', tags: 'painterly style, soft brush strokes, atmospheric lighting' },
+  realistic: { label: 'Realistic', icon: 'fa-camera', description: 'Natural detail', tags: 'photorealistic, natural lighting, detailed skin texture' },
+  fantasy: { label: 'Fantasy', icon: 'fa-dragon', description: 'Worlds & wonder', tags: 'fantasy illustration, dramatic lighting, detailed environment' },
+};
+
+function ngStudioModelOptions() {
+  return models.length
+    ? models.map(model => `<option value="${attr(model)}" ${settings().model === model ? 'selected' : ''}>${esc(ngModelLabel(model))}</option>`).join('')
+    : `<option value="${attr(settings().model)}">${esc(ngModelLabel(settings().model))} · connect to verify</option>`;
+}
+
 function studioHtml() {
   const s = studio;
-  const modeName = ({ portrait: 'Portrait', selfie: 'Selfie', user: 'User', last: 'Last Message', manga: 'Manga Panel', free: 'Free / Scene' })[s.mode] || 'Free / Scene';
-  return `<div class="ng-studio-shell" role="dialog" aria-modal="true">
-    <header class="ng-studio-header"><div class="ng-studio-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span><strong>Novel Gen</strong><small>${modeName}</small></span></div><button id="ng-close" class="menu_button ng-studio-close" type="button"><i class="fa-solid fa-xmark"></i></button></header>
-    <nav class="ng-v055-mobile-nav" aria-label="Novel Gen mobile workspace">
-      <button class="menu_button" type="button" data-mobile-pane="preview"><i class="fa-regular fa-image"></i><span>Image</span></button>
-      <button class="menu_button is-active" type="button" data-mobile-pane="controls" data-tab="generate" aria-pressed="true"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate</span></button>
-      <button class="menu_button" type="button" data-mobile-pane="controls" data-tab="gallery"><i class="fa-solid fa-images"></i><span>Gallery</span></button>
-    </nav>
+  const prefs = settings();
+  const connected = Boolean(models.length && apiKey);
+  const styles = Object.entries(NG_STUDIO_STYLES).map(([id, style]) => `<button class="menu_button ng-style-card ${(s.visualStyle || 'none') === id ? 'is-active' : ''}" type="button" data-ng-style="${id}" aria-pressed="${(s.visualStyle || 'none') === id}"><i class="fa-solid ${style.icon}"></i><span><strong>${style.label}</strong><small>${style.description}</small></span></button>`).join('');
+  return `<div class="ng-studio-shell" role="dialog" aria-modal="true" aria-label="Novel Generation Studio">
+    <header class="ng-studio-header">
+      <div class="ng-studio-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span><strong>Novel Gen<span class="ng-studio-wordmark">STUDIO</span></strong><small>v${VERSION} · NAI image studio</small></span></div>
+      <div class="ng-studio-header-actions"><span id="ng-studio-connection-badge" class="ng-connection-badge ${connected ? 'is-connected' : ''}"><span></span>${connected ? 'API connected' : 'Connect your API'}</span><button id="ng-studio-settings" class="menu_button ng-icon-button" type="button" aria-label="API connection settings"><i class="fa-solid fa-gear"></i></button><button id="ng-close" class="menu_button ng-studio-close ng-icon-button" type="button" aria-label="Close Studio"><i class="fa-solid fa-xmark"></i></button></div>
+    </header>
+    <nav class="ng-v055-mobile-nav" aria-label="Studio workspace"><button class="menu_button is-active" type="button" data-mobile-pane="controls" data-tab="generate" aria-pressed="true"><i class="fa-solid fa-sliders"></i><span>Create</span></button><button class="menu_button" type="button" data-mobile-pane="preview"><i class="fa-regular fa-image"></i><span>Preview</span></button><button class="menu_button" type="button" data-mobile-pane="controls" data-tab="gallery"><i class="fa-solid fa-clock-rotate-left"></i><span>History</span></button></nav>
     <main class="ng-studio-main">
-      <section id="ng-preview" class="ng-studio-preview"><div class="ng-preview-empty"><i class="fa-regular fa-image"></i><strong>Ready to generate</strong><span>Generated images appear here and can be reused without downloading.</span></div></section>
       <aside class="ng-studio-controls">
-        <div class="ng-studio-tabs"><button class="menu_button is-active" data-tab="generate" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate</button><button class="menu_button" data-tab="gallery" type="button"><i class="fa-solid fa-images"></i> Gallery <span id="ng-gallery-count">${gallery.length}</span></button></div>
+        <div class="ng-studio-tabs"><button class="menu_button is-active" data-tab="generate" type="button"><i class="fa-solid fa-sliders"></i> Create</button><button class="menu_button" data-tab="gallery" type="button"><i class="fa-solid fa-clock-rotate-left"></i> History <span id="ng-gallery-count">${gallery.length}</span></button></div>
         <div id="ng-generate-panel">
-          ${studioSection('prompt', 'fa-pen', 'Prompt', `${field('Prompt', `<textarea id="ng-prompt" class="text_pole" rows="7">${esc(s.prompt)}</textarea>`)}${field('Undesired Content', `<textarea id="ng-negative" class="text_pole" rows="4">${esc(s.negative)}</textarea>`)}`, true)}
-          ${studioSection('characters', 'fa-people-group', 'Character Prompts', `<div id="ng-character-list"></div><button id="ng-character-add" class="menu_button" type="button"><i class="fa-solid fa-plus"></i> Add Character</button>`)}
-          ${studioSection('vibe', 'fa-wand-magic-sparkles', 'Vibe Transfer', `<div id="ng-vibe-lock" class="ng-compat-note"></div><div class="ng-actions"><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Add vibe image<input id="ng-vibe-file" type="file" accept="image/*" multiple></label><button id="ng-vibe-normalize" class="menu_button" type="button"><i class="fa-solid fa-scale-balanced"></i> Normalize strengths</button></div><div id="ng-vibe-list" class="ng-reference-list"></div>`)}
-          ${studioSection('precise', 'fa-id-card-clip', 'Precise Reference', `<div id="ng-precise-lock" class="ng-compat-note"></div><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Add precise reference<input id="ng-precise-file" type="file" accept="image/*" multiple></label><div id="ng-precise-list" class="ng-reference-list"></div>`)}
-          ${studioSection('edit', 'fa-paintbrush', 'Image-to-Image / Inpaint', `${field('Mode', `<select id="ng-edit-mode" class="text_pole"><option value="img2img">Image-to-Image</option><option value="inpaint">Inpaint</option></select>`)}<div class="ng-actions"><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Choose source image<input id="ng-source-file" type="file" accept="image/*"></label></div><div id="ng-source-card" class="ng-source-card"><span>No source image selected. You can also choose “Inpaint” or “Use as source” from any generated image.</span></div><div id="ng-mask-editor" class="ng-mask-editor" hidden><div class="ng-mask-toolbar"><button class="menu_button is-active" data-mask-tool="brush" type="button"><i class="fa-solid fa-paintbrush"></i> Brush</button><button class="menu_button" data-mask-tool="eraser" type="button"><i class="fa-solid fa-eraser"></i> Eraser</button><button id="ng-mask-clear" class="menu_button" type="button"><i class="fa-solid fa-trash"></i> Clear</button><label class="ng-brush-size">Size <input id="ng-brush-size" type="range" min="8" max="180" step="2" value="${s.brushSize}"></label></div><div class="ng-mask-stage"><img id="ng-mask-source" alt="Inpaint source"><canvas id="ng-mask-canvas"></canvas></div><small class="ng-help">Paint white over the area that should be regenerated. Use Eraser to remove mask strokes.</small></div>${range('ng-strength', 'Strength', s.strength)}${range('ng-noise', 'Noise', s.noise)}`)}
-          ${studioSection('upscale', 'fa-up-right-and-down-left-from-center', 'Upscale / Enhance', `<p class="ng-muted">Select any generated image, then use 2× or 4K. The extension first tries a provider upscale route; if unavailable it falls back to a low-strength high-resolution img2img pass.</p><div id="ng-upscale-source" class="ng-source-card"><span>No source selected.</span></div><div class="ng-actions"><button id="ng-upscale-2x" class="menu_button" type="button"><i class="fa-solid fa-up-right-and-down-left-from-center"></i> Upscale 2×</button><button id="ng-upscale-4k" class="menu_button" type="button"><i class="fa-solid fa-display"></i> Enhance to 4K</button></div>`)}
-          ${studioSection('parameters', 'fa-sliders', 'Image Parameters', `${sizePicker('ng-studio', s)}<div class="ng-grid ng-grid-2">${field('Steps', `<input id="ng-studio-steps" class="text_pole" type="number" min="1" max="100" value="${s.steps}">`)}${field('Guidance', `<input id="ng-studio-guidance" class="text_pole" type="number" min="0" max="30" step=".1" value="${s.guidance}">`)}${field('Sampler', `<select id="ng-studio-sampler" class="text_pole"><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_euler">Euler</option><option value="k_dpmpp_sde">DPM++ SDE</option></select>`)}${field('Scheduler', `<select id="ng-studio-scheduler" class="text_pole"><option value="native">Provider default</option><option value="karras">Karras</option><option value="exponential">Exponential</option></select>`)}${field('Seed', `<input id="ng-studio-seed" class="text_pole" type="number" value="${s.seed}">`)}${field('Images', `<input id="ng-studio-n" class="text_pole" type="number" min="1" max="4" value="${s.n}">`)}</div>`)}
-          ${studioSection('debug', 'fa-bug', 'Request Debug', `<div class="ng-actions"><button id="ng-debug-clear" class="menu_button" type="button"><i class="fa-solid fa-trash"></i> Clear debug</button></div><pre id="ng-debug-output" class="ng-debug-output"></pre>`)}
+          <div class="ng-studio-model-card"><div class="ng-card-eyebrow"><span>IMAGE MODEL</span><span class="ng-nai-pill">NAI only</span></div>${field('Model', `<select id="ng-studio-model" class="text_pole" ${models.length ? '' : 'disabled'}>${ngStudioModelOptions()}</select>`)}<small id="ng-studio-model-id" class="ng-help">${esc(prefs.model)}</small></div>
+          ${studioSection('connection', 'fa-plug', 'API connection', `<div class="ng-grid ng-grid-2">${field('Provider', `<select id="ng-studio-provider" class="text_pole"><option value="proxy" ${prefs.provider === 'proxy' ? 'selected' : ''}>Custom API / proxy</option><option value="novelai" ${prefs.provider === 'novelai' ? 'selected' : ''}>Direct NovelAI</option></select>`)}${field('Base URL', `<input id="ng-studio-base" class="text_pole" type="url" placeholder="https://your-provider.com/v1" value="${attr(base())}" ${isDirectNovelAI() ? 'readonly' : ''}>`)}</div>${field('API key', `<div class="ng-key-row"><input id="ng-studio-api-key" class="text_pole" type="password" autocomplete="off" placeholder="Enter your API key" value="${attr(apiKey)}"><button id="ng-studio-key-toggle" class="menu_button ng-icon-button" type="button" aria-label="Show API key"><i class="fa-regular fa-eye"></i></button></div>`)}<button id="ng-studio-connect" class="menu_button ng-connect-button" type="button"><i class="fa-solid fa-link"></i> Connect & load NAI models</button><small id="ng-studio-connection-status" class="ng-help" role="status">${connected ? `${models.length} NAI models available` : 'Connect to see the NAI models available to your key.'}</small>`, !connected)}
+          ${studioSection('prompt', 'fa-pen-nib', 'Prompt', `${field('Describe your image', `<textarea id="ng-prompt" class="text_pole" rows="6" placeholder="A character, a place, a moment. Describe what you want to see…">${esc(s.prompt)}</textarea>`)}<div class="ng-negative-heading"><span>Undesired content</span><select id="ng-studio-uc" class="text_pole" aria-label="Undesired content preset"><option value="none">No preset</option><option value="human">Human focus</option><option value="light">Light</option><option value="heavy">Heavy</option></select></div><textarea id="ng-negative" class="text_pole" rows="3" aria-label="Undesired content" placeholder="Elements you want the image to avoid…">${esc(s.negative)}</textarea>`, true)}
+          ${studioSection('style', 'fa-palette', 'Visual style', `<div class="ng-style-grid">${styles}</div><small class="ng-help">An optional style preset. Your prompt and Artist Mix stay editable.</small>`, true)}
+          ${studioSection('canvas', 'fa-expand', 'Canvas & seed', `${sizePicker('ng-studio', s)}<div class="ng-seed-heading"><span>Seed</span><small>−1 = a fresh seed each time</small></div>${ngSeedControl('ng-studio-seed', s.seed)}<div class="ng-grid ng-grid-2 ng-batch-row">${field('Images per run', `<input id="ng-studio-n" class="text_pole" type="number" min="1" max="4" value="${s.n}">`)}<div class="ng-seed-note"><i class="fa-solid fa-fingerprint"></i><span>Keep a seed to compare<br>prompt and style changes.</span></div></div>`, true)}
+          ${studioSection('parameters', 'fa-sliders', 'Generation settings', `<div class="ng-grid ng-grid-2">${field('Steps', `<input id="ng-studio-steps" class="text_pole" type="number" min="1" max="100" value="${s.steps}">`)}${field('Prompt guidance', `<input id="ng-studio-guidance" class="text_pole" type="number" min="0" max="30" step=".1" value="${s.guidance}">`)}${field('Sampler', `<select id="ng-studio-sampler" class="text_pole"><option value="k_euler_ancestral">Euler Ancestral</option><option value="k_dpmpp_2m">DPM++ 2M</option><option value="k_euler">Euler</option><option value="k_dpmpp_sde">DPM++ SDE</option></select>`)}${field('Noise schedule', `<select id="ng-studio-scheduler" class="text_pole"><option value="native">Provider default</option><option value="karras">Karras</option><option value="exponential">Exponential</option></select>`)}</div>`)}
+          ${studioSection('characters', 'fa-people-group', 'Character prompts', `<div id="ng-character-list"></div><button id="ng-character-add" class="menu_button" type="button"><i class="fa-solid fa-plus"></i> Add character</button>`)}
+          ${studioSection('vibe', 'fa-wand-magic-sparkles', 'Vibe Transfer', `<div id="ng-vibe-lock" class="ng-compat-note"></div><div class="ng-actions"><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Add vibe image<input id="ng-vibe-file" type="file" accept="image/*" multiple></label><button id="ng-vibe-normalize" class="menu_button" type="button">Normalize strengths</button></div><div id="ng-vibe-list" class="ng-reference-list"></div>`)}
+          ${studioSection('precise', 'fa-id-card-clip', 'Precise Reference', `<div id="ng-precise-lock" class="ng-compat-note"></div><label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Add reference<input id="ng-precise-file" type="file" accept="image/*" multiple></label><div id="ng-precise-list" class="ng-reference-list"></div>`)}
+          ${studioSection('edit', 'fa-paintbrush', 'Image-to-Image / Inpaint', `${field('Mode', `<select id="ng-edit-mode" class="text_pole"><option value="img2img">Image-to-Image</option><option value="inpaint">Inpaint</option></select>`)}<label class="menu_button ng-file-button"><i class="fa-solid fa-upload"></i> Choose source image<input id="ng-source-file" type="file" accept="image/*"></label><div id="ng-source-card" class="ng-source-card"><span>Choose an image or reuse one from Preview.</span></div><div id="ng-mask-editor" class="ng-mask-editor" hidden><div class="ng-mask-toolbar"><button class="menu_button is-active" data-mask-tool="brush" type="button">Brush</button><button class="menu_button" data-mask-tool="eraser" type="button">Eraser</button><button id="ng-mask-clear" class="menu_button" type="button">Clear</button><label class="ng-brush-size">Size <input id="ng-brush-size" type="range" min="8" max="180" step="2" value="${s.brushSize}"></label></div><div class="ng-mask-stage"><img id="ng-mask-source" alt="Inpaint source"><canvas id="ng-mask-canvas"></canvas></div><small class="ng-help">Paint white over the area to regenerate.</small></div>${range('ng-strength', 'Strength', s.strength)}${range('ng-noise', 'Noise', s.noise)}`)}
+          ${studioSection('upscale', 'fa-up-right-and-down-left-from-center', 'Upscale / Enhance', `<div id="ng-upscale-source" class="ng-source-card"><span>Choose a generated image as a source.</span></div><div class="ng-actions"><button id="ng-upscale-2x" class="menu_button" type="button">Upscale 2×</button><button id="ng-upscale-4k" class="menu_button" type="button">Enhance to 4K</button></div>`)}
+          ${studioSection('debug', 'fa-code', 'Request details', `<button id="ng-debug-clear" class="menu_button" type="button">Clear request history</button><pre id="ng-debug-output" class="ng-debug-output"></pre>`)}
         </div>
         <div id="ng-gallery-panel" hidden><div id="ng-gallery-grid" class="ng-gallery-grid"></div></div>
       </aside>
+      <section class="ng-studio-stage"><header class="ng-stage-header"><div><span class="ng-card-eyebrow">YOUR CANVAS</span><h2>Preview</h2></div><span id="ng-stage-size" class="ng-stage-size">${s.width} × ${s.height}</span></header><section id="ng-preview" class="ng-studio-preview"><div class="ng-preview-empty"><div class="ng-empty-frame"><i class="fa-regular fa-image"></i><span></span></div><strong>Image preview</strong><span>Generated images will appear here.</span><small>Portrait · Square · Landscape</small></div></section><footer class="ng-stage-meta"><span id="ng-last-seed"><i class="fa-solid fa-fingerprint"></i> Your generation details will appear here</span><button id="ng-reuse-seed" class="menu_button" type="button" hidden><i class="fa-solid fa-rotate-left"></i> Reuse seed</button></footer></section>
     </main>
-    <footer class="ng-studio-footer"><div id="ng-gen-status" class="ng-generation-status"></div><button id="ng-generate" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i> Generate</button></footer>
+    <footer class="ng-studio-footer"><div id="ng-gen-status" class="ng-generation-status" role="status">Ready<span class="ng-shortcut">Ctrl / ⌘ + Enter to generate</span></div><div class="ng-footer-actions"><div class="ng-quick-seed"><div class="ng-quick-seed-number"><small>SEED</small><strong id="ng-quick-seed-value">${Number(s.seed) < 0 ? 'Every image' : s.seed}</strong></div><div class="ng-quick-seed-modes" role="group" aria-label="Seed mode for NAI 5" ${ngIsNai5Model() ? '' : 'hidden'}><button class="menu_button" type="button" data-ng-seed-mode="auto" aria-label="Auto seed for NAI 5" aria-pressed="${Number(s.seed) < 0}" title="Choose a fresh seed for each NAI 5 image"><i class="fa-solid fa-shuffle"></i><span>Auto</span></button><button class="menu_button" type="button" data-ng-seed-mode="fixed" aria-label="Fixed seed" aria-pressed="${Number(s.seed) >= 0}" title="Keep the current or last used seed"><i class="fa-solid fa-lock"></i><span>Fixed</span></button></div><button class="menu_button ng-quick-seed-roll" type="button" data-ng-seed-target="ng-studio-seed" aria-label="Roll a new seed and use Fixed mode" title="New seed · switch to Fixed"><i class="fa-solid fa-dice"></i><span>New seed</span></button><span id="ng-seed-mode-status" class="ng-sr-only" role="status" aria-live="polite"></span></div><button id="ng-generate" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate image</span><i class="fa-solid fa-arrow-right"></i></button></div></footer>
   </div>`;
 }
+
 
 function isMobileStudioEnvironment() {
   let contextMobile = false;
@@ -931,6 +1174,7 @@ function bindStudio() {
   renderDebug();
   refreshReferenceLocks();
   refreshMaskEditor();
+  ngBindStudioDesign();
 }
 
 function switchTab(tab) {
@@ -1705,6 +1949,7 @@ async function generateState(state, label = 'Generating…') {
   if (!base()) throw new Error('Set Base URL in the Novel Generation drawer first.');
   if (!apiKey) throw new Error('Enter and test the API key first.');
   if (!s.model) throw new Error('Select a model first.');
+  if (!ngIsNaiImageModel(s.model)) throw new Error('Select a NAI image model first.');
   if (!state.prompt?.trim()) throw new Error('Enter a prompt first.');
   if (state.vibes?.length && state.precise?.length) {
     throw new Error('NovelAI V4.5 does not allow Vibe Transfer and Precise Reference at the same time. Remove one reference type.');
@@ -1841,11 +2086,19 @@ function rememberImages(images, state, extra = {}) {
 async function generateStudio() {
   const button = document.getElementById('ng-generate');
   const out = document.getElementById('ng-gen-status');
+  const buttonHtml = button?.innerHTML;
   button?.setAttribute('disabled', 'disabled');
+  button?.setAttribute('aria-busy', 'true');
+  if (button) button.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i><span>Generating…</span>';
   if (out) out.textContent = 'Generating…';
   try {
     const result = await generateState(studio);
     studio.generated = result.images;
+    studio.lastSeeds = (result.seeds || [result.requestSeed]).filter(seed => Number.isInteger(seed) && seed >= 0);
+    const seedInfo = document.getElementById('ng-last-seed');
+    if (seedInfo) seedInfo.textContent = studio.lastSeeds.length ? `Seed ${studio.lastSeeds.join(' · ')}  /  ${studio.width} × ${studio.height}` : `${studio.width} × ${studio.height} · ${settings().model}`;
+    const reuseSeed = document.getElementById('ng-reuse-seed');
+    if (reuseSeed) reuseSeed.hidden = !studio.lastSeeds.length;
     showImages(result.images);
     rememberImages(result.images, studio, { schema: result.schema, route: result.route });
     if (out) {
@@ -1859,6 +2112,8 @@ async function generateStudio() {
     toast('error', error.message);
   } finally {
     button?.removeAttribute('disabled');
+    button?.removeAttribute('aria-busy');
+    if (button && buttonHtml) button.innerHTML = buttonHtml;
   }
 }
 
@@ -2179,10 +2434,14 @@ async function connectAndLoadModels() {
     const response = await fetch(endpoint('/v1/models'), { headers: headers(), signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await errText(response)}`);
     models = modelIds(await response.json());
-    if (!models.length) throw new Error('Connected, but /v1/models returned no selectable model list.');
+    if (!models.length) {
+      const emptySelect = document.getElementById('ng-model');
+      if (emptySelect) { emptySelect.innerHTML = '<option>No NAI image models available</option>'; emptySelect.disabled = true; }
+      throw new Error('Connected, but this key exposes no NAI image models.');
+    }
     const select = document.getElementById('ng-model');
     select.innerHTML = models.map(model => `<option value="${attr(model)}">${esc(model)}</option>`).join('');
-    const preferred = models.includes(s.model) ? s.model : models.find(model => /nai.*4.?5.*full/i.test(model)) || models[0];
+    const preferred = models.includes(s.model) ? s.model : models.find(model => /nai.*5[-_. ]full/i.test(model) && !/4[-_. ]5/i.test(model)) || models.find(model => /nai.*4.?5.*full/i.test(model)) || models[0];
     s.model = preferred;
     select.value = preferred;
     select.disabled = false;
@@ -2494,7 +2753,7 @@ async function ngPostNativeGeneration(state, signal) {
   if (!parsed.images.length) throw Object.assign(new Error('Native NovelAI route returned success but no image could be decoded.'), { status: 200 });
   ngProviderCaps.nativeGenerateTested = true;
   ngRenderCapabilities();
-  return { images: parsed.images, data: parsed.debug, schema: 'nai-native-route', route: 'native', referenceVerified: isDirectNovelAI() && hasAdvancedReferences(state) };
+  return { images: parsed.images, data: parsed.debug, schema: 'nai-native-route', route: 'native', referenceVerified: isDirectNovelAI() && hasAdvancedReferences(state), requestSeed: payload.parameters.seed };
 }
 
 // OpenAI-wrapper success no longer fails because `usage.image_tokens` is zero.
@@ -2529,7 +2788,7 @@ async function postGeneration(route, candidate, state, signal) {
   }
   const images = extractImages(data);
   if (!images.length) throw Object.assign(new Error('Provider returned success but no image URL/base64 was found in the response.'), { status: 200 });
-  return { images, data, schema: candidate.name, route, referenceVerified: false };
+  return { images, data, schema: candidate.name, route, referenceVerified: false, requestSeed: Number(state.seed) };
 }
 
 async function ngGenerateRvlExact(state, signal) {
@@ -2585,6 +2844,7 @@ async function generateState(state, label = 'Generating…') {
   if (!base()) throw new Error('Set Base URL in the Novel Generation drawer first.');
   if (!apiKey) throw new Error('Enter and test the API key first.');
   if (!s.model) throw new Error('Select a model first.');
+  if (!ngIsNaiImageModel(s.model)) throw new Error('Select a NAI image model first.');
   if (!state.prompt?.trim()) throw new Error('Enter a prompt first.');
   if (state.vibes?.length && state.precise?.length) throw new Error('NovelAI V4.5 does not allow Vibe Transfer and Precise Reference at the same time. Remove one reference type.');
   if (state.precise?.length && !/4[-_. ]?5/i.test(String(s.model))) throw new Error('Precise Reference requires a NovelAI V4.5 model.');
@@ -5201,7 +5461,7 @@ function ngV067ComposeArtistPrompt(prompt, enabled) {
 
 function ngV067EffectivePrompt(prompt) {
   var prefs = ngV067ArtistPrefs();
-  var effective = ngV067ComposeArtistPrompt(prompt, prefs.artistMixEnabled !== false);
+  var effective = ngComposeVisualStyle(ngV067ComposeArtistPrompt(prompt, prefs.artistMixEnabled !== false), studio?.visualStyle || settings().image.visualStyle || 'none');
   var image = settings().image || {};
   return [image.prefix, effective, image.suffix]
     .map(function (part) { return String(part || '').trim(); })
@@ -5411,7 +5671,7 @@ generateState = async function (state, label) {
   var originalPrompt = state?.prompt;
   if (state && typeof originalPrompt === 'string') {
     var enabled = state.artistMixEnabled !== false && ngV067ArtistPrefs().artistMixEnabled !== false;
-    state.prompt = ngV067ComposeArtistPrompt(originalPrompt, enabled);
+    state.prompt = ngComposeVisualStyle(ngV067ComposeArtistPrompt(originalPrompt, enabled), state.visualStyle || 'none');
   }
   try {
     return await ngV067BaseGenerateState(state, label);

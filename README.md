@@ -24,6 +24,19 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 
 ## Current scope
 
+### Studio 0.8
+
+- Connect your Base URL and API key directly inside Studio. Model discovery displays only NAI image models available to that key, preserving each provider's exact model ID. An account without NAI image models receives a clear connection error.
+- Studio uses a black, gray, and white palette, square corners, flat controls, and visible keyboard focus. The interface keeps image previews in their original colors.
+- On desktop, creation controls sit beside a large Preview. On mobile, switch between **Create**, **Preview**, and **History**, with the generation action available at the bottom.
+- Seed controls sit directly beside **Generate**. For NAI 5, the keyboard-accessible **Auto / Fixed** toggle either chooses a fresh seed per image or keeps a concrete seed for comparisons. **New seed** rolls a different positive six-digit seed and switches to Fixed. Switching from Auto to Fixed keeps the last generated seed, or restores the previous fixed seed if nothing has been generated yet. Screen readers receive the mode and current seed through a live status. The returned seed is also available under Preview with **Reuse seed**. NAI 5 is the default model for a new installation.
+- Choose an optional Anime, Manhwa, Painterly, Realistic, or Fantasy preset. Presets compose into the effective prompt once; the editable prompt and Artist Mix remain available.
+- Select Undesired Content presets, change the canvas, batch images, and use **Ctrl/⌘ + Enter** to generate. Prompt drafts, the selected style, seed, and generation controls survive closing Studio.
+
+Run the request/model/seed regression checks with `node --test tests/advanced-generation.test.cjs`. The UI has also been exercised in SillyTavern on desktop and mobile with mocked model and image responses; provider generation requires a working key and Base URL.
+
+For the browser checks, install Playwright and run `CHROMIUM_PATH=/usr/bin/chromium node tests/studio-ui.cjs` against an isolated SillyTavern installation with this extension enabled. `ST_URL` defaults to `http://127.0.0.1:8000`; `ARTIFACT_DIR` optionally selects the screenshot/report directory. Omit `CHROMIUM_PATH` to use Playwright's bundled Chromium. This suite changes the test profile's prompt and connection settings, intercepts all provider requests, and checks NAI filtering, keyboard seed controls, persistence, Preview/History, and square touch targets across desktop, tablet, small mobile, and landscape layouts.
+
 The runtime and stylesheet are consolidated into one file each. The current UI and connection layer include persistent API-key storage, proxy model discovery, a Direct NovelAI provider mode, official native image routing, Vibe Transfer encoding, separate Character Prompts, Precise Reference, image editing, gallery/export, mobile Studio navigation, and the Prompt Assistant. Provider-specific route differences are handled through explicit adapter attempts and surfaced in Request Debug when unsupported.
 
 ## Repository layout

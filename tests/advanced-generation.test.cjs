@@ -28,6 +28,7 @@ function runtime(fetchImpl) {
     settings, ngProbeAdvancedEndpoint, ngProbeAdvancedCapabilities,
     ngCapabilitiesCurrent, ngAdvancedCapabilityLabel, ngGenerationSeed,
     generateState, postGeneration, ngBuildNativeEnvelope, requestCandidates,
+    modelIds, ngIsNaiImageModel, ngIsNai5Model, ngNewSeed, ngComposeVisualStyle,
     caps: ngProviderCaps, logs: debugLog,
     setKey(value) { apiKey = value; settings().proxyApiKey = value; },
     prepareWith(fn) { ngPrepareAdvancedImages = fn; },
@@ -277,4 +278,49 @@ test('RVL keeps its compact request and Negative prompt block', async () => {
   assert.equal(body.seed, 123456);
   assert.equal(body.max_tokens, 16);
   assert.doesNotMatch(body.messages[0].content, /Parameter\{/);
+});
+
+test('model discovery keeps only NAI image models and preserves provider IDs', () => {
+  const api = runtime();
+  const ids = ['gpt-4o', 'nai-diffusion-5-full', '[备用]nai-diffusion-4-5-full',
+    'gpt-image-2', 'NAI 5 Curated', 'NovelAI v4.5 Full', 'nai-diffusion-5-full',
+    'claude-sonnet', 'nai-embedding', 'novelai-erato'];
+  assert.deepEqual(Array.from(api.modelIds({ data: ids.map(id => ({ id })) })),
+    ['nai-diffusion-5-full', '[备用]nai-diffusion-4-5-full', 'NAI 5 Curated', 'NovelAI v4.5 Full']);
+  assert.deepEqual(Array.from(api.modelIds({ models: ['nai-diffusion-5-curated', 'gpt-image-2'] })), ['nai-diffusion-5-curated']);
+  assert.deepEqual(Array.from(api.modelIds({ data: [{ id: 'gpt-image-2' }] })), []);
+});
+
+test('New seed produces a valid positive seed different from the previous value', () => {
+  const api = runtime();
+  let previous = -1;
+  for (let index = 0; index < 20; index++) {
+    const next = api.ngNewSeed(previous);
+    assert.ok(Number.isInteger(next) && next >= 100000 && next <= 999999);
+    assert.notEqual(next, previous);
+    previous = next;
+  }
+});
+
+test('visual presets are applied once without changing the editable prompt', async () => {
+  const requests = [];
+  const api = runtime(async (_url, options) => {
+    requests.push(JSON.parse(options.body));
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  const input = state({ prompt: 'a portrait', visualStyle: 'anime' });
+  await api.generateState(input);
+  await api.generateState(input);
+  assert.equal(input.prompt, 'a portrait');
+  for (const body of requests) {
+    assert.match(body.messages[0].content, /^a portrait, anime style, clean lineart, vibrant colors Parameter\{/);
+    assert.equal((body.messages[0].content.match(/anime style/g) || []).length, 1);
+  }
+  assert.equal(api.ngComposeVisualStyle('a portrait', 'none'), 'a portrait');
+});
+
+test('the quick Auto/Fixed toggle is scoped to NAI 5 model names', () => {
+  const api = runtime();
+  for (const model of ['nai-diffusion-5-full', 'nai-diffusion-5-curated', 'NAI 5 Full', 'NovelAI v5 Full']) assert.equal(api.ngIsNai5Model(model), true);
+  for (const model of ['nai-diffusion-4-5-full', 'nai-diffusion-4-full', 'gpt-image-2']) assert.equal(api.ngIsNai5Model(model), false);
 });

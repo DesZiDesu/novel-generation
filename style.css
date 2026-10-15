@@ -1468,3 +1468,263 @@ body.ng-image-viewer-open {
     grid-template-columns: 1fr;
   }
 }
+
+/* ===== Studio 0.8: monochrome creation workspace ===== */
+#ng-studio-overlay {
+  width: 100vw !important;
+  height: 100dvh !important;
+  --ng-bg: #0c0c0c;
+  --ng-card: #191919;
+  --ng-input: #101010;
+  --ng-line: #333333;
+  --ng-text: #f2f2f2;
+  --ng-muted: #a3a3a3;
+  --ng-accent: #eeeeee;
+  --ng-accent-soft: #ffffff;
+  --ng-accent-bg: #ffffff0a;
+  --ng-border: var(--ng-line);
+  color-scheme: dark;
+  accent-color: #dddddd;
+  background: var(--ng-bg);
+  color: var(--ng-text);
+  font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+  font-size: 14px;
+  line-height: 1.5;
+}
+#ng-studio-overlay *, #ng-studio-overlay *::before, #ng-studio-overlay *::after { box-sizing: border-box; border-radius: 0 !important; text-shadow: none !important; }
+#ng-studio-overlay, #ng-settings, #ng-image-viewer, .ng-v040-preview-overlay {
+  --SmartThemeBodyColor: #f2f2f2;
+  --SmartThemeEmColor: #b0b0b0;
+  --SmartThemeQuoteColor: #dddddd;
+  --SmartThemeBorderColor: #333333;
+  --SmartThemeBlurTintColor: #171717;
+  --warning: #eeeeee;
+  accent-color: #dddddd;
+}
+:is(#ng-settings, #ng-image-viewer, .ng-v040-preview-overlay),
+:is(#ng-settings, #ng-image-viewer, .ng-v040-preview-overlay) *,
+:is(#ng-settings, #ng-image-viewer, .ng-v040-preview-overlay) *::before,
+:is(#ng-settings, #ng-image-viewer, .ng-v040-preview-overlay) *::after { border-radius: 0 !important; text-shadow: none !important; }
+#ng-settings .ng-status { color: #dddddd; }
+#ng-studio-overlay ::selection { background: #555555; color: #ffffff; }
+#ng-studio-overlay .ng-weight-token.is-positive,
+#ng-studio-overlay .ng-weight-token.is-negative,
+#ng-studio-overlay #ng-v067-artist-state,
+#ng-studio-overlay #ng-v055-ai-helper .ng-inline-image-remove,
+#ng-studio-overlay #ng-v055-ai-helper .ng-inline-image-status { color: #dddddd; }
+#ng-studio-overlay .ng-weight-editor .ng-weight-textarea::selection { background: #555555 !important; }
+#ng-studio-overlay .ng-weight-token { --ng-weight-bg: #ffffff0d !important; --ng-weight-edge: #ffffff40 !important; }
+#ng-studio-overlay .ng-weight-token.is-negative { --ng-weight-edge: #ffffff80 !important; border-bottom: 1px dashed #888888; }
+#ng-studio-overlay .ng-studio-shell {
+  width: 100%; height: 100dvh; max-width: none; max-height: none; margin: 0;
+  border: 0; border-radius: 0; box-shadow: none;
+  background: var(--ng-bg); color: var(--ng-text);
+  display: grid; grid-template-rows: 76px minmax(0, 1fr) 80px;
+}
+#ng-studio-overlay .ng-studio-header {
+  padding: 14px 28px; background: #141414; border-bottom: 1px solid var(--ng-line);
+}
+#ng-studio-overlay .ng-studio-title { gap: 12px; }
+#ng-studio-overlay .ng-studio-title > i {
+  display: grid; place-items: center; width: 40px; height: 40px;
+  border-radius: 0; background: var(--ng-accent); color: #111111; font-size: 18px;
+}
+#ng-studio-overlay .ng-studio-title strong { display: flex; align-items: center; gap: 10px; font-size: 20px; letter-spacing: -.6px; }
+#ng-studio-overlay .ng-studio-wordmark { color: var(--ng-muted); font-size: 9px; font-weight: 600; letter-spacing: 2.3px; margin-top: 3px; }
+#ng-studio-overlay .ng-studio-title small { color: var(--ng-muted); font-size: 11px; opacity: 1; }
+#ng-studio-overlay .ng-studio-header-actions { display: flex; align-items: center; gap: 10px; }
+#ng-studio-overlay .ng-connection-badge { display: inline-flex; align-items: center; gap: 7px; font-size: 11px; padding: 6px 12px; color: #b5b5b5; border: 1px solid var(--ng-line); border-radius: 0; }
+#ng-studio-overlay .ng-connection-badge > span { width: 6px; height: 6px; border-radius: 0; background: #adadad; }
+#ng-studio-overlay .ng-connection-badge.is-connected > span { background: #c0c0c0; box-shadow: none; }
+#ng-studio-overlay .menu_button {
+  display: inline-flex; align-items: center; justify-content: center; gap: 7px;
+  border: 1px solid var(--ng-line); border-radius: 0; padding: 9px 12px;
+  background: var(--ng-card); color: var(--ng-text); box-shadow: none;
+  text-shadow: none; font-family: inherit; font-size: 12px; line-height: 1.4; cursor: pointer;
+  min-height: 38px; margin: 0;
+}
+#ng-studio-overlay .menu_button:hover { background: #252525; border-color: #484848; }
+#ng-studio-overlay .menu_button:focus-visible, #ng-studio-overlay .text_pole:focus-visible { outline: 2px solid var(--ng-accent); outline-offset: 2px; }
+#ng-studio-overlay .menu_button:disabled { cursor: wait; opacity: .5; }
+#ng-studio-overlay .ng-icon-button { width: 36px; min-width: 36px !important; min-height: 36px; padding: 7px; }
+#ng-studio-overlay .ng-studio-main { grid-template-columns: 440px minmax(0, 1fr); grid-template-rows: minmax(0, 1fr); background: var(--ng-bg); }
+#ng-studio-overlay .ng-studio-controls { padding: 20px; border-left: 0; border-right: 1px solid var(--ng-line); background: #141414; scrollbar-width: thin; scrollbar-color: #434343 transparent; }
+#ng-studio-overlay .ng-studio-tabs { position: static; grid-template-columns: 1fr 1fr; padding: 4px; gap: 3px; margin: 0 0 20px; border: 1px solid var(--ng-line); border-radius: 0; background: var(--ng-input); }
+#ng-studio-overlay .ng-studio-tabs .menu_button { width: 100%; background: transparent; border-color: transparent; color: var(--ng-muted); min-height: 36px; padding: 7px; }
+#ng-studio-overlay .ng-studio-tabs .menu_button.is-active { background: #272727; color: #b9b9b9; outline: 0; border-color: #373737; }
+#ng-studio-overlay #ng-gallery-count { font-size: 10px; background: #ffffff0c; border-radius: 0; padding: 0 5px; }
+#ng-studio-overlay .ng-studio-model-card { padding: 15px; border: 1px solid var(--ng-line); border-radius: 0; background: var(--ng-card); margin-bottom: 18px; }
+#ng-studio-overlay .ng-card-eyebrow { display: flex; align-items: center; justify-content: space-between; color: var(--ng-muted); font-size: 9px; font-weight: 700; letter-spacing: 1.7px; }
+#ng-studio-overlay .ng-nai-pill { border: 1px solid #4a4a4a; color: #b2b2b2; background: var(--ng-accent-bg); padding: 2px 7px; font-size: 9px; letter-spacing: .4px; border-radius: 0; }
+#ng-studio-overlay .ng-studio-model-card .ng-field { margin: 10px 0 5px; }
+#ng-studio-overlay .ng-studio-model-card .ng-label { display: none; }
+#ng-studio-overlay #ng-studio-model { font-weight: 650; font-size: 14px; text-transform: none; }
+#ng-studio-overlay #ng-studio-model-id { display: block; overflow-wrap: anywhere; font-size: 10px; color: var(--ng-muted); opacity: .8; }
+#ng-studio-overlay .text_pole { width: 100%; min-width: 0; background: var(--ng-input); border: 1px solid var(--ng-line); border-radius: 0; padding: 10px 11px; font-size: 12px; font-family: inherit; line-height: 1.65; color: var(--ng-text); margin: 0; box-shadow: none; }
+#ng-studio-overlay input.text_pole, #ng-studio-overlay select.text_pole { min-height: 42px; }
+#ng-studio-overlay textarea.text_pole { resize: vertical; }
+#ng-studio-overlay .text_pole::placeholder { color: #757575; opacity: 1; }
+#ng-studio-overlay .text_pole:focus { border-color: #767676; }
+#ng-studio-overlay .ng-field { gap: 6px; margin-bottom: 12px; }
+#ng-studio-overlay .ng-label { font-size: 11px; font-weight: 500; color: #bfbfbf; }
+#ng-studio-overlay .ng-help { color: var(--ng-muted); opacity: 1; font-size: 10px; line-height: 1.6; }
+#ng-studio-overlay .ng-muted { color: var(--ng-muted); font-size: 12px; opacity: 1; }
+#ng-studio-overlay .ng-studio-section { border: 0; border-bottom: 1px solid var(--ng-line); margin-bottom: 5px; }
+#ng-studio-overlay .ng-studio-section > summary { padding: 15px 0; font-size: 12px; grid-template-columns: 18px minmax(0,1fr) 12px; gap: 7px; }
+#ng-studio-overlay .ng-studio-section > summary > i:first-child { color: #a7a7a7; font-size: 11px; }
+#ng-studio-overlay .ng-studio-section > summary > i:last-child { font-size: 9px; color: #858585; }
+#ng-studio-overlay .ng-studio-section-body { padding: 0 0 16px; }
+#ng-studio-overlay [data-focus="connection"] { border: 1px dashed #3f3f3f; padding: 0 12px; border-radius: 0; margin-bottom: 10px; }
+#ng-studio-overlay [data-focus="connection"] .ng-grid { grid-template-columns: 1fr; gap: 0; }
+#ng-studio-overlay .ng-connect-button { width: 100%; color: var(--ng-accent-soft); background: var(--ng-accent-bg); border-color: #4a4a4a; }
+#ng-studio-overlay #ng-studio-connection-status { display: block; margin-top: 9px; overflow-wrap: anywhere; }
+#ng-studio-overlay #ng-prompt { min-height: 142px; }
+#ng-studio-overlay .ng-weight-hint { display: none; }
+#ng-studio-overlay .ng-negative-heading { display: flex; align-items: center; gap: 8px; justify-content: space-between; margin: 15px 0 8px; }
+#ng-studio-overlay .ng-negative-heading > span { color: #bfbfbf; font-size: 11px; }
+#ng-studio-overlay .ng-negative-heading select { width: auto; min-height: 30px; padding: 4px 22px 4px 8px; font-size: 10px; background: #1f1f1f; }
+#ng-studio-overlay .ng-style-grid { display: grid; grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; margin: 0 0 10px; }
+#ng-studio-overlay .ng-style-card { width: 100%; flex-direction: column; gap: 8px; min-height: 78px; border-radius: 0; background: var(--ng-input); padding: 12px 4px 10px; }
+#ng-studio-overlay .ng-style-card > i { font-size: 15px; color: #9b9b9b; }
+#ng-studio-overlay .ng-style-card > span { display: flex; flex-direction: column; gap: 2px; }
+#ng-studio-overlay .ng-style-card strong { font-size: 11px; font-weight: 600; }
+#ng-studio-overlay .ng-style-card small { font-size: 8px; color: var(--ng-muted); }
+#ng-studio-overlay .ng-style-card.is-active { color: #cecece; border-color: #828282; background: #282828; }
+#ng-studio-overlay .ng-style-card.is-active > i { color: var(--ng-accent-soft); }
+#ng-studio-overlay .ng-size-chooser { grid-template-columns: repeat(3,minmax(0,1fr)); gap: 7px; margin: 0 0 10px; }
+#ng-studio-overlay .ng-size-choice { width: 100%; flex-direction: column; min-height: 73px; justify-content: center; text-align: center; padding: 10px 3px !important; gap: 5px; background: var(--ng-input); }
+#ng-studio-overlay .ng-size-choice > i { flex: none; font-size: 14px; color: var(--ng-muted); }
+#ng-studio-overlay .ng-size-choice > span { gap: 4px; font-size: 10px; }
+#ng-studio-overlay .ng-size-choice small { font-size: 9px; opacity: .7; }
+#ng-studio-overlay .ng-size-choice.is-active { outline: 0; border-color: #828282; background: #282828; color: #cecece; }
+#ng-studio-overlay .ng-size-choice[data-ng-size="custom"] { min-height: 33px; grid-column: 1/-1; flex-direction: row; padding: 5px !important; }
+#ng-studio-overlay .ng-size-choice[data-ng-size="custom"] > span { flex-direction: row; gap: 7px; }
+#ng-studio-overlay [data-ng-size-status] { font-size: 9px; color: var(--ng-muted); }
+#ng-studio-overlay .ng-seed-heading { display: flex; align-items: center; justify-content: space-between; font-size: 11px; color: #bfbfbf; margin: 16px 0 7px; }
+#ng-studio-overlay .ng-seed-heading small { color: var(--ng-muted); font-size: 9px; }
+.ng-seed-control { display: flex; align-items: stretch; gap: 6px; min-width: 0; }
+.ng-seed-control > input { min-width: 0; flex: 1 1 auto; }
+.ng-seed-control > button { flex: 0 0 auto; }
+#ng-settings .ng-field:has(.ng-seed-control) { grid-column: 1 / -1; }
+#ng-studio-overlay .ng-seed-control .menu_button { white-space: nowrap; padding: 8px 10px; font-size: 10px; gap: 5px; }
+#ng-studio-overlay .ng-seed-auto.is-active { border-color: #5a5a5a; background: var(--ng-accent-bg); color: var(--ng-accent-soft); }
+#ng-studio-overlay .ng-batch-row { margin-top: 14px; gap: 16px; }
+#ng-studio-overlay .ng-seed-note { display: flex; align-items: center; gap: 9px; font-size: 10px; line-height: 1.6; color: var(--ng-muted); padding-top: 9px; }
+#ng-studio-overlay .ng-seed-note > i { font-size: 19px; color: #6f6f6f; }
+#ng-studio-overlay .ng-studio-stage { display: flex; flex-direction: column; min-width: 0; min-height: 0; background: #0c0c0c; overflow: hidden; }
+#ng-studio-overlay .ng-stage-header { display: flex; align-items: center; justify-content: space-between; padding: 27px 32px 20px; flex: 0 0 auto; }
+#ng-studio-overlay .ng-stage-header .ng-card-eyebrow { font-size: 8px; margin-bottom: 5px; }
+#ng-studio-overlay .ng-stage-header h2 { font-size: 21px; font-weight: 550; margin: 0; padding: 0; border: 0; letter-spacing: -.5px; }
+#ng-studio-overlay .ng-stage-size { color: #b9b9b9; background: var(--ng-card); border: 1px solid var(--ng-line); border-radius: 0; font-family: monospace; font-size: 10px; padding: 5px 10px; }
+#ng-studio-overlay .ng-studio-preview { flex: 1 1 auto; min-height: 0; padding: 0 30px 20px; background: var(--ng-bg); }
+#ng-studio-overlay .ng-preview-empty { max-width: none; opacity: 1; gap: 10px; color: var(--ng-muted); }
+#ng-studio-overlay .ng-preview-empty > strong { font-size: 16px; font-weight: 550; color: #cdcdcd; letter-spacing: -.3px; margin-top: 8px; }
+#ng-studio-overlay .ng-preview-empty > span { font-size: 12px; line-height: 1.85; }
+#ng-studio-overlay .ng-preview-empty > small { font-size: 8px; text-transform: uppercase; letter-spacing: 1.8px; margin-top: 13px; color: #686868; }
+#ng-studio-overlay .ng-empty-frame { position: relative; width: 158px; height: 198px; border: 1px dashed #404040; border-radius: 0; display: grid; place-items: center; background: var(--ng-input); }
+#ng-studio-overlay .ng-empty-frame::before, #ng-studio-overlay .ng-empty-frame::after { content: none; }
+#ng-studio-overlay .ng-empty-frame i { font-size: 33px; color: #666666; }
+#ng-studio-overlay .ng-stage-meta { flex: 0 0 auto; border-top: 1px solid #242424; min-height: 54px; padding: 11px 30px; display: flex; align-items: center; justify-content: space-between; gap: 10px; color: #848484; font-size: 10px; }
+#ng-studio-overlay .ng-stage-meta i { margin-right: 4px; }
+#ng-studio-overlay #ng-reuse-seed { font-size: 10px; min-height: 30px; padding: 5px 10px; }
+#ng-studio-overlay #ng-reuse-seed[hidden] { display: none; }
+#ng-studio-overlay .ng-studio-footer { background: #191919; display: flex !important; flex-direction: row; justify-content: space-between; align-items: center; border-top: 1px solid var(--ng-line); padding: 14px 24px; gap: 16px; }
+#ng-studio-overlay .ng-generation-status { font-size: 11px; color: #acacac; max-width: 60%; line-height: 1.6; }
+#ng-studio-overlay .ng-shortcut { display: block; color: #707070; font-size: 9px; margin-top: 2px; }
+#ng-studio-overlay #ng-generate { min-width: 230px; min-height: 48px; background: var(--ng-accent); border-color: var(--ng-accent); color: #111111; font-size: 13px; font-weight: 700; border-radius: 0; gap: 12px; box-shadow: none; }
+#ng-studio-overlay #ng-generate > i:last-child { margin-left: auto; font-size: 11px; }
+#ng-studio-overlay #ng-generate:hover { background: #ffffff; }
+#ng-studio-overlay #ng-generate:disabled { background: #666666; border-color: #666666; color: #ffffff; }
+#ng-studio-overlay .ng-generated-grid { display: grid; grid-template-columns: repeat(auto-fit,minmax(240px,1fr)); align-items: center; min-height: 0; max-width: 1200px; margin: auto; }
+#ng-studio-overlay .ng-generated-card { border: 1px solid var(--ng-line); background: var(--ng-card); border-radius: 0; overflow: hidden; margin: 0; }
+#ng-studio-overlay .ng-generated-card img { display: block; width: 100%; height: auto; max-height: calc(100dvh - 345px); object-fit: contain; background: #0c0c0c; }
+#ng-studio-overlay .ng-generated-card figcaption { padding: 9px; border-top: 1px solid var(--ng-line); }
+#ng-studio-overlay .ng-generated-actions { gap: 5px; }
+#ng-studio-overlay .ng-generated-actions .menu_button { font-size: 10px; min-height: 31px; padding: 6px 8px; }
+#ng-studio-overlay .ng-v040-assistant-tools, #ng-studio-overlay .ng-v055-ai-helper { background: transparent; }
+#ng-studio-overlay .ng-compat-note { background: #232323; border-color: #5e5e5e; font-size: 11px; color: #bbbbbb; }
+@media (min-width: 761px) and (max-width: 1100px) {
+  #ng-studio-overlay .ng-studio-main { grid-template-columns: 380px minmax(0,1fr); }
+  #ng-studio-overlay .ng-studio-controls { padding: 16px; }
+  #ng-studio-overlay .ng-studio-title strong { font-size: 18px; }
+}
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  #ng-studio-overlay .ng-studio-shell { display: flex !important; }
+  #ng-studio-overlay .ng-studio-header { padding: max(12px,env(safe-area-inset-top)) 14px 12px; min-height: 70px; }
+  #ng-studio-overlay .ng-studio-title { gap: 9px; }
+  #ng-studio-overlay .ng-studio-title > i { width: 35px; height: 35px; font-size: 15px; border-radius: 0; }
+  #ng-studio-overlay .ng-studio-title strong { font-size: 17px; gap: 7px; }
+  #ng-studio-overlay .ng-studio-wordmark { font-size: 7px; letter-spacing: 1.2px; }
+  #ng-studio-overlay .ng-studio-title small { font-size: 9px; }
+  #ng-studio-overlay .ng-studio-header-actions { gap: 5px; }
+  #ng-studio-overlay .ng-connection-badge { display: none; }
+  #ng-studio-overlay .ng-icon-button { min-width: 44px !important; width: 44px; min-height: 44px; }
+  #ng-studio-overlay .ng-v055-mobile-nav { display: grid; background: #141414; border-color: var(--ng-line); gap: 4px; padding: 0 12px 10px; }
+  #ng-studio-overlay .ng-v055-mobile-nav .menu_button { background: transparent; border-color: transparent; font-size: 11px; min-height: 38px; color: var(--ng-muted); }
+  #ng-studio-overlay .ng-v055-mobile-nav .menu_button.is-active { background: #292929; color: #c3c3c3; border-color: #444444; box-shadow: none; }
+  #ng-studio-overlay .ng-studio-controls { padding: 8px 16px 20px !important; border: 0; }
+  #ng-studio-overlay .ng-studio-model-card { margin-top: 8px; margin-bottom: 12px; padding: 13px; }
+  #ng-studio-overlay .ng-studio-section > summary { min-height: 47px; padding: 12px 0; }
+  #ng-studio-overlay .ng-studio-section-body { padding: 0 0 15px; }
+  #ng-studio-overlay .ng-studio-controls .text_pole { font-size: 16px; }
+  #ng-studio-overlay .ng-negative-heading select { font-size: 11px; }
+  #ng-studio-overlay .ng-style-card { min-height: 76px; }
+  #ng-studio-overlay .ng-studio-stage { height: 100%; }
+  #ng-studio-overlay[data-ng-mobile-pane="controls"] .ng-studio-stage { display: none; }
+  #ng-studio-overlay .ng-stage-header { padding: 20px 18px 14px; }
+  #ng-studio-overlay .ng-stage-header h2 { font-size: 19px; }
+  #ng-studio-overlay .ng-studio-preview { height: auto !important; flex: 1 1 auto; padding: 0 12px 12px !important; }
+  #ng-studio-overlay .ng-empty-frame { width: 115px; height: 146px; }
+  #ng-studio-overlay .ng-preview-empty > strong { font-size: 14px; }
+  #ng-studio-overlay .ng-preview-empty > span { font-size: 11px; }
+  #ng-studio-overlay .ng-stage-meta { padding: 9px 14px; font-size: 9px; min-height: 48px; }
+  #ng-studio-overlay .ng-studio-footer { min-height: 85px; padding: 10px 14px max(12px,env(safe-area-inset-bottom)) !important; gap: 10px; }
+  #ng-studio-overlay .ng-generation-status { max-width: 45%; font-size: 9px; overflow-wrap: anywhere; }
+  #ng-studio-overlay .ng-shortcut { display: none; }
+  #ng-studio-overlay #ng-generate { min-width: 175px; min-height: 46px; font-size: 12px; padding: 10px 14px; gap: 9px; }
+  #ng-studio-overlay .ng-generated-card img { max-height: calc(100dvh - 355px) !important; width: 100% !important; height: auto !important; }
+  #ng-studio-overlay .ng-generated-grid { min-width: 0; width: 100%; grid-template-columns: minmax(0,1fr); }
+  #ng-studio-overlay .ng-generated-actions .menu_button { min-height: 36px; font-size: 10px; }
+}
+@media (prefers-reduced-motion: reduce) {
+  #ng-studio-overlay *, #ng-studio-overlay *::before, #ng-studio-overlay *::after { animation: none !important; transition: none !important; }
+}
+
+/* Seed controls remain next to Generate, including on small touch screens. */
+#ng-studio-overlay .ng-sr-only { position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px; overflow: hidden; clip-path: inset(50%); white-space: nowrap; border: 0; }
+#ng-studio-overlay .ng-footer-actions { display: flex; align-items: center; gap: 18px; min-width: 0; }
+#ng-studio-overlay[data-ng-mobile-pane="preview"] .ng-studio-footer { display: flex !important; }
+#ng-studio-overlay .ng-quick-seed { display: flex; align-items: center; gap: 9px; min-width: 0; }
+#ng-studio-overlay .ng-quick-seed-number { display: flex; flex-direction: column; min-width: 72px; gap: 2px; }
+#ng-studio-overlay .ng-quick-seed-number > small { color: #b8b8b8; letter-spacing: 1.2px; font-size: 8px; }
+#ng-studio-overlay .ng-quick-seed-number > strong { font: 11px ui-monospace, SFMono-Regular, Consolas, monospace; color: #efefef; }
+#ng-studio-overlay .ng-quick-seed-modes { display: flex; padding: 3px; border-radius: 0; background: #121212; border: 1px solid #353535; gap: 2px; }
+#ng-studio-overlay .ng-quick-seed-modes[hidden] { display: none; }
+#ng-studio-overlay .ng-quick-seed-modes .menu_button { width: auto; min-width: 68px; min-height: 44px; flex: 0 0 auto; white-space: nowrap; border: 1px solid transparent; background: transparent; padding: 7px 9px; font-size: 12px; color: #c2c2c2; border-radius: 0; }
+#ng-studio-overlay .ng-quick-seed-modes .menu_button.is-active { background: #e5e5e5; border-color: #ffffff; color: #111111; }
+#ng-studio-overlay .ng-quick-seed-roll { min-width: 48px; width: auto; min-height: 44px; flex: 0 0 auto; white-space: nowrap; color: #cccccc; border-color: #5a5a5a; background: #282828; font-size: 12px; }
+#ng-studio-overlay .ng-generation-status { max-width: 34%; }
+@media (min-width: 761px) and (max-width: 1100px) {
+  #ng-studio-overlay .ng-footer-actions { gap: 10px; }
+  #ng-studio-overlay .ng-quick-seed { gap: 6px; }
+  #ng-studio-overlay .ng-quick-seed-roll > span { display: none; }
+  #ng-studio-overlay .ng-generation-status { max-width: 21%; }
+  #ng-studio-overlay #ng-generate { min-width: 180px; }
+}
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  #ng-studio-overlay .ng-studio-footer { flex-direction: column; align-items: stretch; min-height: 147px; gap: 6px; }
+  #ng-studio-overlay .ng-footer-actions { display: flex; flex-direction: column; width: 100%; gap: 7px; }
+  #ng-studio-overlay .ng-quick-seed { justify-content: space-between; width: 100%; gap: 6px; }
+  #ng-studio-overlay .ng-quick-seed-number { min-width: 67px; }
+  #ng-studio-overlay .ng-quick-seed-modes { padding: 2px; }
+  #ng-studio-overlay .ng-quick-seed-modes .menu_button { padding: 7px 8px; }
+  #ng-studio-overlay .ng-quick-seed-roll { min-height: 48px; padding: 8px 10px; }
+  #ng-studio-overlay #ng-generate { width: 100%; min-height: 46px; }
+  #ng-studio-overlay .ng-generation-status { order: 1; max-width: 100%; width: 100%; font-size: 9px; line-height: 1.35; display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden; }
+  #ng-studio-overlay .ng-generated-card img { max-height: max(180px,calc(100dvh - 480px)) !important; }
+}
+@media (max-width: 360px) {
+  #ng-studio-overlay .ng-quick-seed-roll > span { display: none; }
+  #ng-studio-overlay .ng-quick-seed-roll { min-width: 48px; }
+  #ng-studio-overlay .ng-quick-seed-number { min-width: 58px; }
+}
