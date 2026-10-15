@@ -87,23 +87,41 @@ function ngCanvasOrientation(width, height) {
 
 function ngUsesCompactChatImageRoute(model) {
   const value = String(model || '').trim();
-  return ngIsRvlProxy()
+  const compactProxy = ngIsRvlProxy() || (ngIsRvlShop() && /^\[X\]/i.test(value)
+    && /nai-diffusion-4-5(?:-|$)/i.test(value) && !/\[(?:Bak|Img1)\]/i.test(value));
+  return compactProxy
     && !/^\[备用\]/.test(value)
     && /nai-diffusion-(?:5|4-5)(?:-|$)/i.test(value);
 }
 
 function ngUsesBackupImagesRoute(model) {
-  return ngIsRvlProxy() && /^\[备用\]/.test(String(model || '').trim());
+  return (ngIsRvlProxy() && /^\[备用\]/.test(String(model || '').trim()))
+    || (ngIsRvlShop() && /^\[X\]/i.test(String(model || '')) && /\[Bak\]/i.test(String(model || '')));
 }
 
 function ngIsRvlProxy() {
   return /^https?:\/\/(?:www\.)?rvlconnect\.com(?:\/|$)/i.test(base());
 }
 
-function ngUsesXfxNaiChatRoute(model) {
-  return /^https?:\/\/(?:new\.xfxai\.top|new\.xfxaigc\.com)(?:\/|$)/i.test(base())
+function ngUsesParameterChatImageRoute(model) {
+  const parameterProxy = /^https?:\/\/(?:new\.xfxai\.top|new\.xfxaigc\.com)(?:\/|$)/i.test(base())
+    || (ngIsRvlShop() && (/^\[MI\]/i.test(String(model || '')) || (/^\[X\]/i.test(String(model || ''))
+      && !/\[Bak\]/i.test(String(model || '')) && (/nai-diffusion-5(?:-|$)/i.test(String(model || '')) || /\[Img1\]/i.test(String(model || ''))))));
+  return parameterProxy
     && !/^\[备用\]/.test(String(model || '').trim())
     && /nai-diffusion(?:-|$)/i.test(String(model || ''));
+}
+
+function ngIsRvlShop() {
+  return /^https?:\/\/shop\.rvlconnect\.com(?:\/|$)/i.test(base());
+}
+
+function ngUsesShopNativeChat(model = settings().model) {
+  return ngIsRvlShop() && /^\[DM\]/i.test(model) && !/\[OAI\]/i.test(model) && ngIsNaiImageModel(model);
+}
+
+function ngUnavailableRouteKey(route) {
+  return `${base()}|${settings().model}|${route}`;
 }
 
 function ngIsPlainImageState(state) {
@@ -481,6 +499,29 @@ const base = () => {
 const endpoint = path => /\/v1$/i.test(base()) ? `${base()}${path.replace(/^\/v1/, '')}` : `${base()}${path}`;
 const headers = () => ({ 'Content-Type': 'application/json', Accept: 'application/json', ...(apiKey ? { Authorization: `Bearer ${apiKey}` } : {}) });
 
+// Resolve CORS transport with the read-only model request. Generation requests
+// use that choice once; retrying a failed POST could generate and bill twice.
+function ngProviderFetch(url, options) {
+  const useServer = settings().corsProxyBaseUrl === base()
+    && new URL(url).origin === new URL(base()).origin;
+  return fetch(useServer ? `/proxy/${url}` : url, options);
+}
+
+async function ngFetchModels(options) {
+  const url = endpoint('/v1/models');
+  try {
+    return await ngProviderFetch(url, options);
+  } catch (error) {
+    if (error.name !== 'TypeError' || options.signal?.aborted || settings().corsProxyBaseUrl === base()) throw error;
+    const response = await fetch(`/proxy/${url}`, options);
+    if (response.status === 404 && /CORS proxy is disabled/i.test(await response.clone().text())) {
+      throw new Error('This API blocks browser CORS. Enable enableCorsProxy: true in SillyTavern config.yaml, restart SillyTavern, then reconnect.');
+    }
+    if (response.ok) settings().corsProxyBaseUrl = base();
+    return response;
+  }
+}
+
 async function errText(response) {
   try {
     const text = await response.text();
@@ -504,8 +545,9 @@ function ngModelLabel(model) {
   const match = raw.match(/nai-diffusion-(5|4-5|4|3|2)(?:-(full|curated(?:-preview)?))?/i);
   if (!match) return raw;
   const variant = match[2] ? ` · ${match[2].replace('-preview', ' preview').replace(/^./, value => value.toUpperCase())}` : '';
-  const prefix = raw.match(/^\[[^\]]+\]/)?.[0];
-  return `${prefix ? `${prefix} ` : ''}NAI ${match[1].replace('-', '.')}${variant}`;
+  const prefix = raw.slice(0, match.index).replace(/[-_\s]+$/, '').replace(/\]-\[/g, '] [').replace(/\[OAI\]/gi, '[OpenAI]');
+  const suffix = raw.slice(match.index + match[0].length).replace(/^[-_\s]+/, '');
+  return `${prefix ? `${prefix} ` : ''}NAI ${match[1].replace('-', '.')}${variant}${suffix ? ` ${suffix}` : ''}`;
 }
 
 function ngIsNai5Model(model = settings().model) {
@@ -725,7 +767,7 @@ async function connectAndLoadModels() {
   const controller = new AbortController();
   const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs));
   try {
-    const response = await fetch(endpoint('/v1/models'), { headers: headers(), signal: controller.signal });
+    const response = await ngFetchModels({ headers: headers(), signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await errText(response)}`);
     models = modelIds(await response.json());
     if (!models.length) {
@@ -1522,6 +1564,31 @@ function ngGenerationSeed(value) {
   return globalThis.crypto?.getRandomValues ? crypto.getRandomValues(bytes)[0] : Math.floor(Math.random() * 0x100000000);
 }
 
+function ngPngGenerationMetadata(image) {
+  if (!/^data:image\/png;base64,/i.test(String(image))) return null;
+  try {
+    const bytes = Uint8Array.from(atob(image.slice(image.indexOf(',') + 1)), character => character.charCodeAt(0));
+    if (bytes.length < 8 || bytes[0] !== 0x89 || bytes[1] !== 0x50 || bytes[2] !== 0x4e || bytes[3] !== 0x47) return null;
+    const view = new DataView(bytes.buffer);
+    const decoder = new TextDecoder();
+    for (let offset = 8; offset + 12 <= bytes.length;) {
+      const length = view.getUint32(offset);
+      if (length > bytes.length - offset - 12) return null;
+      if (decoder.decode(bytes.subarray(offset + 4, offset + 8)) === 'tEXt') {
+        const text = decoder.decode(bytes.subarray(offset + 8, offset + 8 + length));
+        if (text.startsWith('Comment\0')) {
+          const metadata = JSON.parse(text.slice(8));
+          return Number.isInteger(metadata.seed) && metadata.seed >= 0 && metadata.seed <= 0xffffffff
+            ? { seed: metadata.seed, steps: metadata.steps, negative: metadata.uc || metadata.v4_negative_prompt?.caption?.base_caption }
+            : null;
+        }
+      }
+      offset += length + 12;
+    }
+  } catch { /* A provider may return PNG without readable generation metadata. */ }
+  return null;
+}
+
 function nativeReferenceFields(state) {
   const fields = {};
   if (state.vibes?.length) {
@@ -1789,6 +1856,7 @@ function routeCandidates() {
   const mode = s.routeMode;
   // RVL does not route its normal NAI V5/V4.5 models through the images API,
   // even when a generic route override was previously saved in the extension.
+  if (ngUsesShopNativeChat(s.model)) return ['chat'];
   if (ngUsesCompactChatImageRoute(s.model)) return ['chat'];
   if (ngUsesBackupImagesRoute(s.model)) return ['images'];
   if (mode === 'images') return ['images'];
@@ -1824,6 +1892,9 @@ function chatPayloadFrom(payload, state) {
     width: canvas.width,
     height: canvas.height,
   };
+  if (ngUsesShopNativeChat(model)) {
+    return { model, messages: [{ role: 'user', content: state.prompt.trim() }], input: state.prompt.trim(), action: naiAction(state), parameters: ngBuildNativeParameters(state), use_new_shared_trial: ngIsNai5Model(model) ? true : undefined };
+  }
   if (ngUsesCompactChatImageRoute(model)) {
     const negative = state.negative?.trim();
     const content = negative
@@ -1840,7 +1911,7 @@ function chatPayloadFrom(payload, state) {
       seed: ngRvlChatSeed(state),
     });
   }
-  if (ngUsesXfxNaiChatRoute(model) && ngIsPlainImageState(state)) {
+  if (ngUsesParameterChatImageRoute(model) && ngIsPlainImageState(state)) {
     // XFX's public client uses Parameter{...} in the user message. It does
     // not send nested image_generation/parameters to its NAI chat route.
     // Source: https://design.xfxaigc.com (Hr/Br chat request builders).
@@ -1912,7 +1983,7 @@ async function postGeneration(route, candidate, state, signal) {
   const body = route === 'chat' ? chatPayloadFrom(candidate.payload, state) : candidate.payload;
   const url = endpoint(path);
   const started = performance.now();
-  const response = await fetch(url, {
+  const response = await ngProviderFetch(url, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
@@ -2094,18 +2165,27 @@ async function generateStudio() {
   try {
     const result = await generateState(studio);
     studio.generated = result.images;
-    studio.lastSeeds = (result.seeds || [result.requestSeed]).filter(seed => Number.isInteger(seed) && seed >= 0);
+    const requestedSeeds = result.seeds || [result.requestSeed];
+    const metadata = result.images.map(ngPngGenerationMetadata);
+    const seedMismatch = metadata.some((item, index) => item && requestedSeeds[index] !== undefined && item.seed !== requestedSeeds[index]);
+    studio.lastSeeds = metadata.every(Boolean) ? metadata.map(item => item.seed) : requestedSeeds.filter(seed => Number.isInteger(seed) && seed >= 0);
     const seedInfo = document.getElementById('ng-last-seed');
-    if (seedInfo) seedInfo.textContent = studio.lastSeeds.length ? `Seed ${studio.lastSeeds.join(' · ')}  /  ${studio.width} × ${studio.height}` : `${studio.width} × ${studio.height} · ${settings().model}`;
+    const seedLabel = metadata.every(Boolean) ? 'Image seed' : 'Requested seed (unverified)';
+    if (seedInfo) seedInfo.textContent = studio.lastSeeds.length ? `${seedLabel} ${studio.lastSeeds.join(' · ')}${seedMismatch ? ` · requested ${requestedSeeds.join(' / ')}` : ''}  /  ${studio.width} × ${studio.height}` : `${studio.width} × ${studio.height} · ${settings().model}`;
     const reuseSeed = document.getElementById('ng-reuse-seed');
     if (reuseSeed) reuseSeed.hidden = !studio.lastSeeds.length;
     showImages(result.images);
     rememberImages(result.images, studio, { schema: result.schema, route: result.route });
     if (out) {
-      out.textContent = `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'} using ${result.schema}.`;
+      out.textContent = `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'}.`;
+      if (seedMismatch) out.textContent += ' Provider seed differs from the requested seed. Auto/Fixed was not applied by this route.';
       if (!isDirectNovelAI() && (hasAdvancedReferences(studio) || studio.source)) {
         out.textContent += ' The proxy has not confirmed that the source, mask or reference fields were applied.';
       }
+    }
+    if (seedMismatch) {
+      debugAttempt({ route: 'parameter-verification', schema: result.schema, model: settings().model, requested_seeds: requestedSeeds, image_metadata: metadata, seed_verified: false });
+      toast('warning', 'The provider ignored the requested seed. Check Request details or choose another NAI route.');
     }
   } catch (error) {
     if (out) out.textContent = `Generation failed: ${error.message}`;
@@ -2321,7 +2401,7 @@ async function ngProbeAdvancedEndpoint(path) {
     const controller = new AbortController();
     const timer = setTimeout(() => controller.abort(), 6500);
     try {
-      const response = await fetch(url, {
+      const response = await ngProviderFetch(url, {
         method: 'POST',
         headers: headers(),
         body: '{}',
@@ -2431,7 +2511,7 @@ async function connectAndLoadModels() {
       return;
     }
 
-    const response = await fetch(endpoint('/v1/models'), { headers: headers(), signal: controller.signal });
+    const response = await ngFetchModels({ headers: headers(), signal: controller.signal });
     if (!response.ok) throw new Error(`HTTP ${response.status}: ${await errText(response)}`);
     models = modelIds(await response.json());
     if (!models.length) {
@@ -2527,6 +2607,7 @@ function ngBuildOpenAiWithNativeParameters(state) {
   const native = ngBuildNativeEnvelope(state);
   return cleanObject({
     ...strictPayload(state),
+    ...(ngIsPlainImageState(state) ? coreExtendedFields(state) : {}),
     input: native.input,
     action: native.action,
     parameters: native.parameters,
@@ -2541,6 +2622,7 @@ function ngBuildOpenAiWithNativeParameters(state) {
 function requestCandidates(state) {
   const s = settings();
   const strict = strictPayload(state);
+  if (ngUsesShopNativeChat(s.model)) return [{ name: 'rvl-shop-nai-native-chat', payload: strict }];
   if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
     return [{ name: 'rvl-compact-chat', payload: strict }];
   }
@@ -2695,7 +2777,7 @@ async function ngEncodeVibeReference(ref, signal) {
     information_extracted: information,
   };
   const started = performance.now();
-  const response = await fetch(url, {
+  const response = await ngProviderFetch(url, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(payload),
@@ -2737,7 +2819,7 @@ async function ngPostNativeGeneration(state, signal) {
   if (!url) throw new Error('The provider did not expose an /ai/generate-image route.');
   const payload = ngBuildNativeEnvelope(state);
   const started = performance.now();
-  const response = await fetch(url, {
+  const response = await ngProviderFetch(url, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(payload),
@@ -2764,12 +2846,18 @@ async function postGeneration(route, candidate, state, signal) {
   const body = route === 'chat' ? chatPayloadFrom(candidate.payload, state) : candidate.payload;
   const url = endpoint(path);
   const started = performance.now();
-  const response = await fetch(url, {
+  const response = await ngProviderFetch(url, {
     method: 'POST',
     headers: headers(),
     body: JSON.stringify(body),
     signal,
   });
+  if (response.ok && ngUsesShopNativeChat()) {
+    const parsed = await ngNativeResponseImages(response);
+    debugAttempt({ route, schema: candidate.name, status: response.status, ms: Math.round(performance.now() - started), payload: safePayloadForDebug(body), response: parsed.debug, reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable' });
+    if (!parsed.images.length) throw Object.assign(new Error('Native chat wrapper returned success without an image.'), { status: 200 });
+    return { images: parsed.images, data: parsed.debug, schema: candidate.name, route, referenceVerified: false, requestSeed: body.parameters.seed };
+  }
   const raw = await response.text();
   let data = null;
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
@@ -2822,7 +2910,7 @@ async function ngGenerateRvlExact(state, signal) {
   };
 }
 
-async function ngGenerateXfxNai(state, signal) {
+async function ngGenerateParameterChatImages(state, signal) {
   const count = Math.max(1, Math.min(4, Math.round(Number(state.n) || 1)));
   const images = [];
   const seeds = [];
@@ -2830,7 +2918,7 @@ async function ngGenerateXfxNai(state, signal) {
   for (let index = 0; index < count; index += 1) {
     const requestState = { ...state, n: 1 };
     lastResult = await postGeneration('chat', {
-      name: 'xfx-nai-chat-parameters', payload: { model: settings().model },
+      name: ngIsRvlShop() ? 'rvl-shop-nai-chat-parameters' : 'xfx-nai-chat-parameters', payload: { model: settings().model },
     }, requestState, signal);
     images.push(...lastResult.images.slice(0, 1));
     seeds.push(ngRvlChatSeed(requestState));
@@ -2854,7 +2942,7 @@ async function generateState(state, label = 'Generating…') {
 
   const controller = new AbortController();
   const sequentialRequestCount = (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source)
-    || (ngUsesXfxNaiChatRoute(s.model) && ngIsPlainImageState(state))
+    || (ngUsesParameterChatImageRoute(s.model) && ngIsPlainImageState(state))
     ? Math.max(1, Math.min(10, Math.round(Number(state.n) || 1)))
     : 1;
   const timer = setTimeout(() => controller.abort(), Math.max(1000, s.timeoutMs) * sequentialRequestCount);
@@ -2863,8 +2951,8 @@ async function generateState(state, label = 'Generating…') {
     if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
       return await ngGenerateRvlExact(state, controller.signal);
     }
-    if (ngUsesXfxNaiChatRoute(s.model) && ngIsPlainImageState(state)) {
-      return await ngGenerateXfxNai(state, controller.signal);
+    if (ngUsesParameterChatImageRoute(s.model) && ngIsPlainImageState(state)) {
+      return await ngGenerateParameterChatImages(state, controller.signal);
     }
 
     state = await ngPrepareAdvancedImages({ ...state, seed: ngGenerationSeed(state.seed) }, controller.signal);
@@ -2900,13 +2988,13 @@ async function generateState(state, label = 'Generating…') {
         return await ngPostNativeGeneration(state, controller.signal);
       } catch (error) {
         failures.push(`native/nai-native-route: ${error.message}`);
-        if (error.name === 'AbortError') throw error;
+        if (error.name === 'AbortError' || error.name === 'TypeError') throw error;
         if (error.status === 401 || error.status === 403) throw error;
       }
     }
 
     const candidates = requestCandidates(state);
-    const routes = routeCandidates().filter(route => s.routeMode !== 'auto' || !unavailableAutoRoutes.has(route));
+    const routes = routeCandidates().filter(route => s.routeMode !== 'auto' || !unavailableAutoRoutes.has(ngUnavailableRouteKey(route)));
     for (const route of routes) {
       if (route === 'chat' && (hasAdvancedReferences(state) || state.source)) continue;
       for (const candidate of candidates) {
@@ -2914,16 +3002,16 @@ async function generateState(state, label = 'Generating…') {
           return await postGeneration(route, candidate, state, controller.signal);
         } catch (error) {
           failures.push(`${route}/${candidate.name}: ${error.message}`);
-          if (error.name === 'AbortError') throw error;
+          if (error.name === 'AbortError' || error.name === 'TypeError') throw error;
           if (error.status === 401 || error.status === 403) throw error;
           // A missing endpoint is independent of payload schema. In Auto mode,
           // do not submit the same generation two more times to the same 404
           // route; remember it for this page session and proceed to chat.
           if (error.status === 404 && s.routeMode === 'auto') {
-            unavailableAutoRoutes.add(route);
+            unavailableAutoRoutes.add(ngUnavailableRouteKey(route));
             break;
           }
-          if (error.status === 200) continue;
+          if (error.status === 200 || error.status >= 429) throw error;
         }
       }
     }
@@ -3035,7 +3123,7 @@ async function tryDedicatedUpscale(source, mode, width, height) {
   const payload = cleanObject({ model: s.model, image: imageValue(source), factor: mode === '4k' ? 4 : 2, scale: mode === '4k' ? 4 : 2, width, height, response_format: s.responseFormat });
   try {
     for (const path of ['/v1/images/upscale', '/v1/images/upscales']) {
-      const response = await fetch(endpoint(path), { method: 'POST', headers: headers(), body: JSON.stringify(payload), signal: controller.signal });
+      const response = await ngProviderFetch(endpoint(path), { method: 'POST', headers: headers(), body: JSON.stringify(payload), signal: controller.signal });
       const raw = await response.text();
       let data = {};
       try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
@@ -5177,7 +5265,7 @@ async function ngConsolidatedEncodeVibeReference(ref, signal) {
     for (const payload of payloads) {
       const started = performance.now();
       try {
-        const response = await fetch(url, {
+        const response = await ngProviderFetch(url, {
           method: 'POST',
           headers: headers(),
           body: JSON.stringify(payload),

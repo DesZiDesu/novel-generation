@@ -8,7 +8,7 @@ function runtime(fetchImpl) {
   const context = { extensionSettings: {}, saveSettingsDebounced() {} };
   const sandbox = {
     console, URL, Response, AbortController, DOMException, TextDecoder, Blob,
-    performance, structuredClone,
+    performance, structuredClone, atob, btoa,
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     fetch: fetchImpl,
     document: {
@@ -28,7 +28,8 @@ function runtime(fetchImpl) {
     settings, ngProbeAdvancedEndpoint, ngProbeAdvancedCapabilities,
     ngCapabilitiesCurrent, ngAdvancedCapabilityLabel, ngGenerationSeed,
     generateState, postGeneration, ngBuildNativeEnvelope, requestCandidates,
-    modelIds, ngIsNaiImageModel, ngIsNai5Model, ngNewSeed, ngComposeVisualStyle,
+    modelIds, ngModelLabel, ngIsNaiImageModel, ngIsNai5Model, ngNewSeed, ngComposeVisualStyle,
+    ngProviderFetch, ngFetchModels, ngPngGenerationMetadata,
     caps: ngProviderCaps, logs: debugLog,
     setKey(value) { apiKey = value; settings().proxyApiKey = value; },
     prepareWith(fn) { ngPrepareAdvancedImages = fn; },
@@ -323,4 +324,158 @@ test('the quick Auto/Fixed toggle is scoped to NAI 5 model names', () => {
   const api = runtime();
   for (const model of ['nai-diffusion-5-full', 'nai-diffusion-5-curated', 'NAI 5 Full', 'NovelAI v5 Full']) assert.equal(api.ngIsNai5Model(model), true);
   for (const model of ['nai-diffusion-4-5-full', 'nai-diffusion-4-full', 'gpt-image-2']) assert.equal(api.ngIsNai5Model(model), false);
+});
+
+test('model labels distinguish OpenAI and other tagged Full models', () => {
+  const api = runtime();
+  assert.equal(api.ngModelLabel('[DM]-[AG]-[OAI]-nai-diffusion-5-full-[0.2]'), '[DM] [AG] [OpenAI] NAI 5 · Full [0.2]');
+  assert.equal(api.ngModelLabel('[DM]-[AG]-nai-diffusion-5-full-[0.46]'), '[DM] [AG] NAI 5 · Full [0.46]');
+});
+
+test('CORS transport is chosen on the model GET and used once for generation', async () => {
+  const calls = [];
+  const api = runtime(async (url, options) => {
+    calls.push({ url, options });
+    if (!url.startsWith('/proxy/')) throw new TypeError('Failed to fetch');
+    return Response.json({ data: [] });
+  });
+  await api.ngFetchModels({ headers: {} });
+  assert.equal(calls.length, 2);
+  assert.equal(calls[0].url, 'https://new.xfxai.top/v1/models');
+  assert.equal(calls[1].url, '/proxy/https://new.xfxai.top/v1/models');
+  await api.ngProviderFetch('https://new.xfxai.top/v1/images/generations', { method: 'POST' });
+  assert.equal(calls.length, 3);
+  assert.equal(calls[2].url, '/proxy/https://new.xfxai.top/v1/images/generations');
+  api.settings().proxyBaseUrl = 'https://other.example/v1';
+  await assert.rejects(api.ngProviderFetch('https://other.example/v1/images/generations', { method: 'POST' }), /Failed to fetch/);
+  assert.equal(calls.at(-1).url, 'https://other.example/v1/images/generations');
+});
+
+test('disabled SillyTavern proxy gives an actionable CORS connection error', async () => {
+  const api = runtime(async url => {
+    if (!url.startsWith('/proxy/')) throw new TypeError('Failed to fetch');
+    return new Response('CORS proxy is disabled. Enable it in config.yaml', { status: 404 });
+  });
+  await assert.rejects(api.ngFetchModels({ headers: {} }), /enableCorsProxy: true/);
+  assert.equal(api.settings().corsProxyBaseUrl, undefined);
+});
+
+test('OpenAI NAI wrappers receive seed and controls at both supported levels', async () => {
+  const requests = [];
+  const api = runtime(async (url, options) => {
+    if (!url.endsWith('/images/generations')) return new Response('missing', { status: 404 });
+    requests.push(JSON.parse(options.body));
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+  api.settings().model = '[DM]-[AG]-[OAI]-nai-diffusion-5-full-[0.2]';
+  await api.generateState(state({ seed: 123456, negative: 'lowres' }));
+  assert.equal(requests.length, 1);
+  const body = requests[0];
+  assert.equal(body.seed, 123456);
+  assert.equal(body.parameters.seed, 123456);
+  assert.equal(body.steps, 28);
+  assert.equal(body.parameters.steps, 28);
+  assert.equal(body.negative_prompt, 'lowres');
+  assert.equal(body.parameters.negative_prompt, 'lowres');
+});
+
+test('uncertain generation outcomes are surfaced without another paid attempt', async () => {
+  for (const outcome of ['network', 200, 500]) {
+    let requests = 0;
+    const api = runtime(async (url) => {
+      if (!url.endsWith('/images/generations')) return new Response('missing', { status: 404 });
+      requests++;
+      if (outcome === 'network') throw new TypeError('Failed to fetch');
+      return Response.json({ error: 'upstream failed' }, { status: outcome });
+    });
+    api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+    await assert.rejects(api.generateState(state()));
+    assert.equal(requests, 1);
+  }
+});
+
+test('PNG generation metadata preserves an actual zero seed and rejects broken chunks', () => {
+  const api = runtime();
+  const comment = Buffer.from('Comment\0' + JSON.stringify({ seed: 0, steps: 23 }));
+  const chunk = Buffer.alloc(comment.length + 12);
+  chunk.writeUInt32BE(comment.length);
+  chunk.write('tEXt', 4);
+  comment.copy(chunk, 8);
+  const png = Buffer.concat([Buffer.from([137,80,78,71,13,10,26,10]), chunk]);
+  assert.deepEqual(JSON.parse(JSON.stringify(api.ngPngGenerationMetadata('data:image/png;base64,' + png.toString('base64')))), { seed: 0, steps: 23 });
+  assert.equal(api.ngPngGenerationMetadata('https://example.com/image.png'), null);
+  assert.equal(api.ngPngGenerationMetadata('data:image/png;base64,' + png.subarray(0, 20).toString('base64')), null);
+});
+
+test('RVL shop X/MI routes put generation controls in Parameter chat text', async () => {
+  for (const prefix of ['[X]-[AG]', '[MI]-[AG]', '[X]-[AG]-[Img1]']) {
+    const requests = [];
+    const api = runtime(async (url, options) => {
+      requests.push({ url, body: JSON.parse(options.body) });
+      return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+    });
+    api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+    api.settings().model = `${prefix}-nai-diffusion-5-full-[0.2]`;
+    await api.generateState(state({ seed: 123456 }));
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /chat\/completions$/);
+    assert.match(requests[0].body.messages[0].content, /Parameter\{size:832:1216,steps:28,scale:5,sampler:k_euler_ancestral,seed:123456,/);
+  }
+});
+
+test('RVL shop native channels retain the input and native parameters through chat', async () => {
+  const requests = [];
+  const api = runtime(async (url, options) => {
+    if (!url.endsWith('/chat/completions')) return new Response('missing', { status: 404 });
+    requests.push(JSON.parse(options.body));
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+  api.settings().model = '[DM]-[AG]-nai-diffusion-4-5-full-[0.1]';
+  await api.generateState(state({ seed: 123456, negative: 'lowres' }));
+  assert.equal(requests.length, 1);
+  assert.equal(requests[0].input, 'a cat');
+  assert.equal(requests[0].messages[0].content, 'a cat');
+  assert.equal(requests[0].parameters.seed, 123456);
+  assert.equal(requests[0].parameters.negative_prompt, 'lowres');
+});
+
+test('a model-specific 404 does not disable the image route for another model', async () => {
+  const requests = [];
+  const api = runtime(async (url, options) => {
+    const body = JSON.parse(options.body || '{}');
+    if (!body.prompt && !body.messages) return new Response('missing', { status: 404 });
+    requests.push({ url, model: body.model });
+    if (url.endsWith('/images/generations') && body.model === 'nai-diffusion-5-full') return new Response('missing', { status: 404 });
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  api.settings().proxyBaseUrl = 'https://other.example/v1';
+  await api.generateState(state());
+  api.settings().model = 'nai-diffusion-4-5-full';
+  await api.generateState(state());
+  assert.match(requests.at(-1).url, /images\/generations$/);
+  assert.equal(requests.at(-1).model, 'nai-diffusion-4-5-full');
+});
+
+test('RVL shop legacy V4.5 uses compact chat and Bak uses the image route', async () => {
+  for (const [model, route] of [
+    ['[X]-[AG]-nai-diffusion-4-5-full-[0.21]', 'chat/completions'],
+    ['[X]-[AG]-[Bak]-nai-diffusion-4-5-full-[0.21]', 'images/generations'],
+  ]) {
+    const requests = [];
+    const api = runtime(async (url, options) => {
+      const body = JSON.parse(options.body || '{}');
+      if (!body.prompt && !body.messages) return new Response('missing', { status: 404 });
+      requests.push({ url, body });
+      return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+    });
+    api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+    api.settings().model = model;
+    await api.generateState(state({ seed: 123456, negative: 'lowres' }));
+    assert.equal(requests.length, 1);
+    assert.ok(requests[0].url.endsWith(route));
+    assert.equal(requests[0].body.seed, 123456);
+    if (route.startsWith('chat')) assert.doesNotMatch(requests[0].body.messages[0].content, /Parameter\{/);
+  }
 });
