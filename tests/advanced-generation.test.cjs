@@ -5,9 +5,9 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 function runtime(fetchImpl) {
-  const context = { extensionSettings: {}, saveSettingsDebounced() {} };
+  const context = { extensionSettings: {}, saveSettingsDebounced() {}, getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'test-csrf' }) };
   const sandbox = {
-    console, URL, Response, AbortController, DOMException, TextDecoder, Blob,
+    console, URL, Headers, Response, AbortController, DOMException, TextDecoder, Blob,
     performance, structuredClone, atob, btoa,
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     fetch: fetchImpl,
@@ -351,13 +351,58 @@ test('CORS transport is chosen on the model GET and used once for generation', a
   assert.equal(calls.at(-1).url, 'https://other.example/v1/images/generations');
 });
 
-test('disabled SillyTavern proxy gives an actionable CORS connection error', async () => {
-  const api = runtime(async url => {
-    if (!url.startsWith('/proxy/')) throw new TypeError('Failed to fetch');
-    return new Response('CORS proxy is disabled. Enable it in config.yaml', { status: 404 });
+test('disabled CORS proxy uses the normal ST backend with per-request credentials and exact image parameters', async () => {
+  const calls = [];
+  const api = runtime(async (url, options) => {
+    calls.push({ url, options });
+    if (url.startsWith('https:')) throw new TypeError('Failed to fetch');
+    if (url.startsWith('/proxy/')) return new Response('CORS proxy is disabled. Enable it in config.yaml', { status: 404 });
+    return Response.json(url.endsWith('/status') ? { data: [{ id: 'nai-diffusion-5-full' }] } : { choices: [{ message: { content: 'image' } }] });
   });
-  await assert.rejects(api.ngFetchModels({ headers: {} }), /enableCorsProxy: true/);
+  await api.ngFetchModels({ headers: { Authorization: 'Bearer image-only-key' } });
+  assert.equal(calls.length, 3);
+  const discovery = JSON.parse(calls[2].options.body);
+  assert.equal(discovery.reverse_proxy, 'https://new.xfxai.top/v1');
+  assert.equal(discovery.proxy_password, 'image-only-key');
+  assert.equal(calls[2].options.headers['X-CSRF-Token'], 'test-csrf');
   assert.equal(api.settings().corsProxyBaseUrl, undefined);
+  assert.equal(api.settings().serverBridgeBaseUrl, 'https://new.xfxai.top/v1');
+  const payload = { model: 'nai-diffusion-5-full', messages: [{ role: 'user', content: 'portrait Parameter{seed:123456}' }], stream: false, parameters: { seed: 123456, steps: 28, negative_prompt: 'blurry' } };
+  await api.ngProviderFetch('https://new.xfxai.top/v1/chat/completions', { method: 'POST', headers: { Authorization: 'Bearer image-only-key' }, body: JSON.stringify(payload) });
+  assert.equal(calls.length, 4);
+  assert.equal(calls[3].url, '/api/backends/chat-completions/generate');
+  const forwarded = JSON.parse(calls[3].options.body);
+  assert.deepEqual(JSON.parse(forwarded.custom_include_body), payload);
+  assert.deepEqual(JSON.parse(forwarded.custom_include_headers), { Authorization: 'Bearer image-only-key' });
+  assert.equal(calls[3].options.headers.Authorization, undefined);
+  const blocked = await api.ngProviderFetch('https://new.xfxai.top/ai/generate-image', { method: 'POST', body: '{}' });
+  assert.equal(blocked.status, 404);
+  assert.equal(calls.length, 4, 'native probe must not cause a chat generation');
+  api.settings().proxyBaseUrl = 'https://other.example/v1';
+  await assert.rejects(api.ngProviderFetch('https://other.example/v1/chat/completions', { method: 'POST' }), /Failed to fetch/);
+});
+
+test('a saved proxy selection migrates when the hosted server disables CORS proxy', async () => {
+  const calls = [];
+  const api = runtime(async url => {
+    calls.push(url);
+    return url.startsWith('/proxy/') ? new Response('CORS proxy is disabled', { status: 404 }) : Response.json({ data: [{ id: 'nai-diffusion-5-full' }] });
+  });
+  api.settings().corsProxyBaseUrl = 'https://new.xfxai.top/v1';
+  assert.equal((await api.ngFetchModels()).ok, true);
+  assert.deepEqual(calls, ['/proxy/https://new.xfxai.top/v1/models', '/api/backends/chat-completions/status']);
+  assert.equal(api.settings().corsProxyBaseUrl, undefined);
+});
+
+test('ST HTTP 200 upstream errors become failures without retrying generation', async () => {
+  let calls = 0;
+  const api = runtime(async () => { calls++; return Response.json({ error: { message: 'Bad Gateway' } }); });
+  api.settings().serverBridgeBaseUrl = 'https://new.xfxai.top/v1';
+  assert.equal((await api.ngFetchModels()).status, 502);
+  const response = await api.ngProviderFetch('https://new.xfxai.top/v1/chat/completions', { method: 'POST', body: JSON.stringify({ model: 'nai-diffusion-5-full', messages: [] }) });
+  assert.equal(response.status, 502);
+  assert.match(await response.text(), /Bad Gateway/);
+  assert.equal(calls, 2);
 });
 
 test('OpenAI NAI wrappers receive seed and controls at both supported levels', async () => {

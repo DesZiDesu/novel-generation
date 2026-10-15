@@ -32,3 +32,18 @@ The first browser connection failed because the provider’s OPTIONS response om
 The OpenAI routes continued to ignore advanced controls in the tested top-level/nested request shapes. These limitations were left visible; no model fallback was used to disguise a failed test. The native DM channels passed initial request validation after adding the required chat fields, but image generation still returned an upstream request failure. MI token errors were upstream-specific: the supplied key continued to authenticate successfully against the model list.
 
 Provider availability and field handling may change after this test. Raw credentials and generated image binaries are not committed.
+
+## 0.8.1 hosted-server follow-up
+
+Retested with SillyTavern 1.19.0 and **`enableCorsProxy: false`**. The normal Chat Completions backend loaded 27 NAI models from the same RVL shop endpoint without changing server configuration, chat connection settings or global API secrets. One additional benign portrait was generated through each previously verified Full channel:
+
+| Model | PNG seed | Steps | Dimensions | Result |
+| --- | --- | --- | --- | --- |
+| `[X]-[AG]-nai-diffusion-5-full-[0.21]` | 555080 | 28 | 832 × 1216 | Seed and negative prompt matched. |
+| `[X]-[AG]-[Img1]-nai-diffusion-4-5-full-[0.21]` | 308824 | 28 | 832 × 1216 | Seed and negative prompt matched. |
+
+Both requests used Auto seed. Neither new sample showed spiral eyes. These two images validate the new transport; the earlier multi-image comparison remains the evidence for seed variation. No Curated model was called.
+
+The 34 request regression checks pass. Chromium and Playwright WebKit pass the Studio interaction/layout suite at desktop, tablet, 320px/390px mobile and touch landscape sizes, including opening at scroll position zero, opaque bordered native textareas, Auto/Fixed keyboard interaction and preserving open sections/scroll on Create–Preview switches. WebKit uses emulated mobile viewports, not a physical iPhone.
+
+A separate local upstream fixture deliberately omits CORS headers. Both browser engines pass against the actual SillyTavern status/generate backend with the generic CORS proxy disabled: discovery, migration of a saved proxy preference, exact forwarded provider JSON, per-request image authentication, no leaked CSRF header and unchanged chat settings. An upstream HTTP 500 produces one failed generation attempt with no retry. Native capability probes do not send chat generation requests. This bridge handles models and chat requests only; native image, Inpaint and reference routes remain unavailable through it.
