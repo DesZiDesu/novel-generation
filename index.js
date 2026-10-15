@@ -576,7 +576,7 @@ function ngSyncStudioConnection() {
   select.innerHTML = ngStudioModelOptions();
   select.disabled = !models.length;
   const modelId = document.getElementById('ng-studio-model-id');
-  if (modelId) modelId.textContent = s.model;
+  if (modelId) modelId.textContent = models.length ? s.model : 'Connect your API to load NAI models.';
   const badge = document.getElementById('ng-studio-connection-badge');
   if (badge) {
     const connected = Boolean(models.length && apiKey);
@@ -926,7 +926,7 @@ const NG_STUDIO_STYLES = {
 function ngStudioModelOptions() {
   return models.length
     ? models.map(model => `<option value="${attr(model)}" ${settings().model === model ? 'selected' : ''}>${esc(ngModelLabel(model))}</option>`).join('')
-    : `<option value="${attr(settings().model)}">${esc(ngModelLabel(settings().model))} · connect to verify</option>`;
+    : `<option value="${attr(settings().model)}">${esc(ngModelLabel(settings().model))}</option>`;
 }
 
 function studioHtml() {
@@ -936,7 +936,7 @@ function studioHtml() {
   const styles = Object.entries(NG_STUDIO_STYLES).map(([id, style]) => `<button class="menu_button ng-style-card ${(s.visualStyle || 'none') === id ? 'is-active' : ''}" type="button" data-ng-style="${id}" aria-pressed="${(s.visualStyle || 'none') === id}"><i class="fa-solid ${style.icon}"></i><span><strong>${style.label}</strong><small>${style.description}</small></span></button>`).join('');
   return `<div class="ng-studio-shell" role="dialog" aria-modal="true" aria-label="Novel Generation Studio">
     <header class="ng-studio-header">
-      <div class="ng-studio-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span><strong>Novel Gen<span class="ng-studio-wordmark">STUDIO</span></strong><small>v${VERSION} · NAI image studio</small></span></div>
+      <div class="ng-studio-title"><i class="fa-solid fa-wand-magic-sparkles"></i><span><strong>Novel Gen</strong><small>v${VERSION} · NAI image studio</small></span></div>
       <div class="ng-studio-header-actions"><span id="ng-studio-connection-badge" class="ng-connection-badge ${connected ? 'is-connected' : ''}"><span></span>${connected ? 'API connected' : 'Connect your API'}</span><button id="ng-studio-settings" class="menu_button ng-icon-button" type="button" aria-label="API connection settings"><i class="fa-solid fa-gear"></i></button><button id="ng-close" class="menu_button ng-studio-close ng-icon-button" type="button" aria-label="Close Studio"><i class="fa-solid fa-xmark"></i></button></div>
     </header>
     <nav class="ng-v055-mobile-nav" aria-label="Studio workspace"><button class="menu_button is-active" type="button" data-mobile-pane="controls" data-tab="generate" aria-pressed="true"><i class="fa-solid fa-sliders"></i><span>Create</span></button><button class="menu_button" type="button" data-mobile-pane="preview"><i class="fa-regular fa-image"></i><span>Preview</span></button><button class="menu_button" type="button" data-mobile-pane="controls" data-tab="gallery"><i class="fa-solid fa-clock-rotate-left"></i><span>History</span></button></nav>
@@ -944,7 +944,7 @@ function studioHtml() {
       <aside class="ng-studio-controls">
         <div class="ng-studio-tabs"><button class="menu_button is-active" data-tab="generate" type="button"><i class="fa-solid fa-sliders"></i> Create</button><button class="menu_button" data-tab="gallery" type="button"><i class="fa-solid fa-clock-rotate-left"></i> History <span id="ng-gallery-count">${gallery.length}</span></button></div>
         <div id="ng-generate-panel">
-          <div class="ng-studio-model-card"><div class="ng-card-eyebrow"><span>IMAGE MODEL</span><span class="ng-nai-pill">NAI only</span></div>${field('Model', `<select id="ng-studio-model" class="text_pole" ${models.length ? '' : 'disabled'}>${ngStudioModelOptions()}</select>`)}<small id="ng-studio-model-id" class="ng-help">${esc(prefs.model)}</small></div>
+          <div class="ng-studio-model-card"><div class="ng-card-eyebrow"><span>IMAGE MODEL</span><span class="ng-nai-pill">NAI only</span></div>${field('Model', `<select id="ng-studio-model" class="text_pole" ${models.length ? '' : 'disabled'}>${ngStudioModelOptions()}</select>`)}<small id="ng-studio-model-id" class="ng-help">${connected ? esc(prefs.model) : 'Connect your API to load NAI models.'}</small></div>
           ${studioSection('connection', 'fa-plug', 'API connection', `<div class="ng-grid ng-grid-2">${field('Provider', `<select id="ng-studio-provider" class="text_pole"><option value="proxy" ${prefs.provider === 'proxy' ? 'selected' : ''}>Custom API / proxy</option><option value="novelai" ${prefs.provider === 'novelai' ? 'selected' : ''}>Direct NovelAI</option></select>`)}${field('Base URL', `<input id="ng-studio-base" class="text_pole" type="url" placeholder="https://your-provider.com/v1" value="${attr(base())}" ${isDirectNovelAI() ? 'readonly' : ''}>`)}</div>${field('API key', `<div class="ng-key-row"><input id="ng-studio-api-key" class="text_pole" type="password" autocomplete="off" placeholder="Enter your API key" value="${attr(apiKey)}"><button id="ng-studio-key-toggle" class="menu_button ng-icon-button" type="button" aria-label="Show API key"><i class="fa-regular fa-eye"></i></button></div>`)}<button id="ng-studio-connect" class="menu_button ng-connect-button" type="button"><i class="fa-solid fa-link"></i> Connect & load NAI models</button><small id="ng-studio-connection-status" class="ng-help" role="status">${connected ? `${models.length} NAI models available` : 'Connect to see the NAI models available to your key.'}</small>`, !connected)}
           ${studioSection('prompt', 'fa-pen-nib', 'Prompt', `${field('Describe your image', `<textarea id="ng-prompt" class="text_pole" rows="6" placeholder="A character, a place, a moment. Describe what you want to see…">${esc(s.prompt)}</textarea>`)}<div class="ng-negative-heading"><span>Undesired content</span><select id="ng-studio-uc" class="text_pole" aria-label="Undesired content preset"><option value="none">No preset</option><option value="human">Human focus</option><option value="light">Light</option><option value="heavy">Heavy</option></select></div><textarea id="ng-negative" class="text_pole" rows="3" aria-label="Undesired content" placeholder="Elements you want the image to avoid…">${esc(s.negative)}</textarea>`, true)}
           ${studioSection('style', 'fa-palette', 'Visual style', `<div class="ng-style-grid">${styles}</div><small class="ng-help">An optional style preset. Your prompt and Artist Mix stay editable.</small>`, true)}

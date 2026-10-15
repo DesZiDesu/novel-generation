@@ -137,6 +137,21 @@ fs.mkdirSync(artifactDir, { recursive: true });
           assert.ok(target.left >= 0 && target.right <= width, JSON.stringify(target));
           assert.equal(target.radius, '0px');
         }
+        const top = await root.evaluate(n => {
+          const mobileNav = n.querySelector('.ng-v055-mobile-nav');
+          const nav = getComputedStyle(mobileNav).display !== 'none' ? mobileNav : n.querySelector('.ng-studio-tabs');
+          return {
+            tabs: [...nav.querySelectorAll('button')].map(b => {
+              const r = b.getBoundingClientRect(); return { width: r.width, height: r.height };
+            }),
+            titleRight: n.querySelector('.ng-studio-title').getBoundingClientRect().right,
+            actionsLeft: n.querySelector('.ng-studio-header-actions').getBoundingClientRect().left,
+          };
+        });
+        const tabWidths = top.tabs.map(tab => tab.width);
+        assert.ok(Math.max(...tabWidths) - Math.min(...tabWidths) <= 1, JSON.stringify(top));
+        assert.ok(top.tabs.every(tab => tab.height >= 44), JSON.stringify(top));
+        assert.ok(top.titleRight + 8 <= top.actionsLeft, JSON.stringify(top));
       }
       await root.locator('#ng-close').click();
       await page.evaluate(() => document.getElementById('ng-v051-open-studio').click());
