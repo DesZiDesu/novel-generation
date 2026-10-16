@@ -24,11 +24,15 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 
 ### Updating without clearing browser data
 
-The current manifest loads `index.js?v=0.8.2` and `style.css?v=0.8.2`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
+The current manifest loads `index.js?v=0.8.3` and `style.css?v=0.8.3`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
 
 The cache regression test is `CHROMIUM_PATH=/usr/bin/chromium node tests/cached-update.cjs`, or `BROWSER=webkit node tests/cached-update.cjs`, against an isolated SillyTavern installation. It warms the browser's real HTTP cache with a 0.8.0 fixture, publishes the current manifest, then verifies the current Studio loads while old cached assets and saved state remain available. The fixture serves manifests without caching so the test isolates stale JavaScript/CSS; a host that also serves a stale manifest must update/revalidate that metadata.
 
 ## Current scope
+
+### OpenAI chat canvas fix in 0.8.3
+
+OpenAI-compatible NAI chat requests now include `size`, `width`, `height` and `aspect_ratio` at the top level, using the same resolved canvas as the nested compatibility fields. RVL's `[DM][OAI]` NAI 5 channel ignored dimensions sent only inside `image_config`/`image_generation`, returning a landscape image for Portrait. A live top-level request returned the requested 832 × 1216 portrait. Seed and other provider-control limitations are separate and remain reported.
 
 ### Rate limits in 0.8.2
 
