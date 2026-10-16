@@ -47,3 +47,20 @@ Both requests used Auto seed. Neither new sample showed spiral eyes. These two i
 The 34 request regression checks pass. Chromium and Playwright WebKit pass the Studio interaction/layout suite at desktop, tablet, 320px/390px mobile and touch landscape sizes, including opening at scroll position zero, opaque bordered native textareas, Auto/Fixed keyboard interaction and preserving open sections/scroll on Create–Preview switches. WebKit uses emulated mobile viewports, not a physical iPhone.
 
 A separate local upstream fixture deliberately omits CORS headers. Both browser engines pass against the actual SillyTavern status/generate backend with the generic CORS proxy disabled: discovery, migration of a saved proxy preference, exact forwarded provider JSON, per-request image authentication, no leaked CSRF header and unchanged chat settings. An upstream HTTP 500 produces one failed generation attempt with no retry. Native capability probes do not send chat generation requests. This bridge handles models and chat requests only; native image, Inpaint and reference routes remain unavailable through it.
+
+## 2026-10-16 — NAI 5 rate-limit follow-up, 0.8.2
+
+The same RVL shop key continued to load 27 NAI image models. The X NAI 5 Full channel now returned an upstream HTTP 429. A direct request using the exact extension payload confirmed the message: no upstream tokens are available; they may be disabled, expired or cooling down. There was no `Retry-After` header. The first failing Studio attempt sent exactly one generation request; SillyTavern replaced the upstream error with HTTP 200 and `Too Many Requests`, which 0.8.1 had normalized to 502.
+
+NAI 5 **Full** channels were selected explicitly in Studio, without Curated calls or automatic model substitution:
+
+| Channel | Result |
+| --- | --- |
+| `[X]-[AG]-nai-diffusion-5-full-[0.21]` | HTTP 429, no available upstream token. Repeated diagnostic attempts were spaced beyond the default 60-second wait. |
+| `[DM]-[AG]-nai-diffusion-5-full-[0.46]` | Provider returned Internal Server Error. |
+| `[MI]-[AG]-nai-diffusion-5-full-[0.2]` | Provider returned Unauthorized. |
+| `[DM]-[AG]-[OAI]-nai-diffusion-5-full-[0.2]` | Generated one image. PNG reports seed 0, 23 steps and 1216 × 832, ignoring the requested seed, 28 steps and 832 × 1216. The existing provider warning remained visible. |
+
+The successful OpenAI-channel sample had no observed spiral eyes, but does not resolve X channel availability or seed fidelity. The extension now recognizes ST-wrapped rate limits as 429, applies a visible cooldown, prevents overlapping image jobs, and allows a manual retry after the wait without silently resubmitting.
+
+Public endpoint research found the [RVL shop guide](https://rvlconnect.com/blog/manual-guide-shop-api) explicitly pairs shop keys with `https://shop.rvlconnect.com/v1`. [XFX's public status configuration](https://new.xfxai.top/api/status) advertises `https://new.xfxai.top` and backup `https://new.xfxaigc.com`, with documentation at `https://doc.xfxaigc.com/`. The extension's documented OpenAI-compatible path adds `/v1`. These are separate provider accounts; the shop credential was not sent to XFX or any newly discovered host. No undocumented private upstream URL was established.

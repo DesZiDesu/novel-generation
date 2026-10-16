@@ -24,6 +24,10 @@ fs.mkdirSync(artifactDir, { recursive: true });
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     if (req.method === 'GET' && req.url === '/v1/models') return res.end(JSON.stringify({ data: ['gpt-4o', 'nai-diffusion-5-full', 'nai-diffusion-4-5-full'].map(id => ({ id })) }));
     if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+      if (failGeneration === 'rate') {
+        res.writeHead(429, { 'Retry-After': '2' });
+        return res.end(JSON.stringify({ error: { message: 'Too Many Requests', type: 'rate_limit_error' } }));
+      }
       res.writeHead(failGeneration ? 500 : 200);
       return res.end(JSON.stringify(failGeneration ? { error: { message: 'Fixture failure' } } : { choices: [{ message: { content: `data:image/png;base64,${fixture}` } }] }));
     }
@@ -95,6 +99,27 @@ fs.mkdirSync(artifactDir, { recursive: true });
     await page.waitForFunction(() => !document.getElementById('ng-generate').disabled);
     generations = requests.filter(r => r.method === 'POST');
     assert.equal(generations.length, 2, 'upstream failure must not trigger another paid request');
+    await page.clock.install({ time: new Date() });
+    failGeneration = 'rate';
+    await root.locator('#ng-generate').click();
+    await page.waitForFunction(() => document.getElementById('ng-generate').getAttribute('aria-busy') !== 'true');
+    assert.equal(await root.locator('#ng-generate').isDisabled(), true);
+    assert.match(await root.locator('#ng-generate').innerText(), /Wait \d+s/);
+    assert.match(await root.locator('#ng-gen-status').innerText(), /Provider rate limit/);
+    assert.equal(requests.filter(r => r.method === 'POST').length, 3);
+    await root.locator('#ng-close').click();
+    await page.evaluate(() => document.getElementById('ng-v051-open-studio').click());
+    assert.equal(await root.locator('#ng-generate').isDisabled(), true, 'reopening Studio must preserve cooldown');
+    // ST discards upstream Retry-After, so the extension uses its 60s default.
+    await page.clock.fastForward(61000);
+    assert.equal(await root.locator('#ng-generate').isDisabled(), false);
+    assert.match(await root.locator('#ng-generate').innerText(), /Generate image/);
+    assert.equal(requests.filter(r => r.method === 'POST').length, 3, 'expiry must not automatically generate or bill');
+    failGeneration = false;
+    await root.locator('#ng-generate').click();
+    await page.waitForFunction(() => !document.getElementById('ng-generate').disabled);
+    assert.equal(requests.filter(r => r.method === 'POST').length, 4);
+    assert.match(await root.locator('#ng-gen-status').innerText(), /Generated 1 image/);
     assert.equal(await page.evaluate(() => JSON.stringify(SillyTavern.getContext().chatCompletionSettings)), chatBefore);
     assert.deepEqual(errors, []);
     await root.locator('.ng-v055-mobile-nav [data-tab="generate"]').click();
@@ -104,7 +129,7 @@ fs.mkdirSync(artifactDir, { recursive: true });
     await root.locator('#ng-close').click();
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.apiKey), '');
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.proxyApiKey), '');
-    const report = { browser: engine.name(), genericProxy: 'disabled', browserCors: 'blocked', expectedCorsDiagnostics: corsErrors.length, backend: 'real SillyTavern status/generate', naiModels: 2, migration: 'passed', exactProviderPayload: 'passed', generationAttempts: 2, uncertainFailureRetries: 0, browserErrors: errors };
+    const report = { browser: engine.name(), genericProxy: 'disabled', browserCors: 'blocked', expectedCorsDiagnostics: corsErrors.length, backend: 'real SillyTavern status/generate', naiModels: 2, migration: 'passed', exactProviderPayload: 'passed', generationAttempts: 4, cooldownReopenAndExpiry: 'passed', automaticRetries: 0, browserErrors: errors };
     fs.writeFileSync(path.join(artifactDir, 'hosted-report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {

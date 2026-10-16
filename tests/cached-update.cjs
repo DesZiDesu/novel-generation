@@ -111,7 +111,7 @@ fs.mkdirSync(artifactDir, { recursive: true });
     assert.ok(cached.css.startsWith('/* cached-0.8.0 */'), 'the old stylesheet must still be cached');
     assert.equal(legacyRequests(), 2, 'old file reads must come from browser cache');
     assert.deepEqual(cacheClearingResponses, []); assert.deepEqual(forwardingErrors, []); assert.deepEqual(errors, []);
-    await page.screenshot({ path: path.join(artifactDir, 'updated-081.png') });
+    await page.screenshot({ path: path.join(artifactDir, `updated-${manifest.version.replaceAll('.', '')}.png`) });
     const report = { browser: engine.name(), before: '0.8.0', after: manifest.version, realHttpCache: true, legacyAssetsStillCached: true, cookiePreserved: loaded.cookie, localStoragePreserved: true, savedSettingsPreserved: true, cacheClearingResponses, assetRequests, browserErrors: errors };
     fs.writeFileSync(path.join(artifactDir, 'cache-report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));

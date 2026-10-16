@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.8.1';
+const VERSION = '0.8.2';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -70,6 +70,9 @@ let mountTimer = null;
 let mountAttempts = 0;
 let studioLaunchTimer = null;
 let studioLaunchSequence = 0;
+let ngGenerationBusy = false;
+let ngRateLimitTimer = null;
+const ngProviderCooldowns = new Map();
 const gallery = [];
 const debugLog = [];
 const unavailableAutoRoutes = new Set();
@@ -501,12 +504,79 @@ const headers = () => ({ 'Content-Type': 'application/json', Accept: 'applicatio
 
 // Resolve CORS transport with the read-only model request. Generation requests
 // use that choice once; retrying a failed POST could generate and bill twice.
-function ngProviderFetch(url, options = {}) {
-  if (new URL(url).origin === new URL(base()).origin) {
-    if (settings().serverBridgeBaseUrl === base()) return ngServerBridgeFetch(url, options);
-    if (settings().corsProxyBaseUrl === base()) return fetch(`/proxy/${url}`, options);
+function ngCooldownSeconds(connection = { base: base(), key: apiKey }) {
+  const entry = ngProviderCooldowns.get(connection.base);
+  return entry?.key === connection.key ? Math.max(0, Math.ceil((entry.until - Date.now()) / 1000)) : 0;
+}
+
+function ngRateLimitError(seconds) {
+  return Object.assign(new Error(`Provider rate limit (429). Please wait ${seconds} seconds before generating again.`), { status: 429, retryAfter: seconds });
+}
+
+function ngRetryDelaySeconds(value, now = Date.now()) {
+  if (value == null || String(value).trim() === '') return 60;
+  const seconds = Number(value);
+  if (Number.isFinite(seconds)) return seconds >= 0 ? Math.max(1, Math.ceil(seconds)) : 60;
+  const date = Date.parse(value);
+  return Number.isFinite(date) ? Math.max(1, Math.ceil((date - now) / 1000)) : 60;
+}
+
+function ngSyncGenerationAvailability() {
+  const button = document.getElementById('ng-generate');
+  if (!button) {
+    if (ngRateLimitTimer) clearInterval(ngRateLimitTimer);
+    ngRateLimitTimer = null;
+    return;
   }
-  return fetch(url, options);
+  const seconds = ngCooldownSeconds();
+  const busy = button.getAttribute('aria-busy') === 'true';
+  button.disabled = busy || ngGenerationBusy || seconds > 0;
+  if (seconds > 0) {
+    if (!busy) {
+      button._ngReadyHtml ??= button.innerHTML;
+      button.textContent = `Wait ${seconds}s`;
+    }
+    const out = document.getElementById('ng-gen-status');
+    if (out) out.textContent = `Provider rate limit. Try again in ${seconds}s.`;
+    if (!ngRateLimitTimer) ngRateLimitTimer = setInterval(ngSyncGenerationAvailability, 1000);
+  } else {
+    if (button._ngReadyHtml != null) {
+      button.innerHTML = button._ngReadyHtml;
+      delete button._ngReadyHtml;
+      const out = document.getElementById('ng-gen-status');
+      if (out) out.textContent = 'Ready to try again. The provider may still be busy.';
+    }
+    if (ngRateLimitTimer) clearInterval(ngRateLimitTimer);
+    ngRateLimitTimer = null;
+  }
+}
+
+function ngQuotaError(data) {
+  return data?.quota_error === true || /insufficient_quota|billing_hard_limit|quota_exceeded/i.test(String(data?.error?.type || data?.error?.code || ''));
+}
+
+async function ngProviderFetch(url, options = {}) {
+  const connection = { base: base(), key: apiKey };
+  const generation = options.method?.toUpperCase() === 'POST' && options.body && options.body !== '{}';
+  const seconds = ngCooldownSeconds(connection);
+  if (generation && seconds) throw ngRateLimitError(seconds);
+  let response;
+  if (new URL(url).origin === new URL(base()).origin) {
+    if (settings().serverBridgeBaseUrl === base()) response = await ngServerBridgeFetch(url, options);
+    else if (settings().corsProxyBaseUrl === base()) response = await fetch(`/proxy/${url}`, options);
+  }
+  response ??= await fetch(url, options);
+  if (generation && response.status === 429) {
+    let data;
+    try { data = await response.clone().json(); } catch { /* A plain-text 429 still needs a cooldown. */ }
+    if (!ngQuotaError(data)) {
+      const delay = ngRetryDelaySeconds(response.headers.get('Retry-After'));
+      const previous = ngProviderCooldowns.get(connection.base);
+      ngProviderCooldowns.set(connection.base, { key: connection.key, until: Math.max(previous?.key === connection.key ? previous.until : 0, Date.now() + delay * 1000) });
+      ngSyncGenerationAvailability();
+    }
+  }
+  return response;
 }
 
 // SillyTavern's normal Custom API backend does not require enableCorsProxy.
@@ -544,9 +614,18 @@ async function ngServerBridgeFetch(url, options = {}) {
   const data = await response.clone().json();
   // ST can wrap upstream errors in HTTP 200. Never interpret them as successful
   // images, or retry a paid generation after the backend has already sent it.
-  if (data?.error) return Response.json({ error: { message: isModels
-    ? 'SillyTavern could not load provider models. Check the Base URL, API key and server connection.'
-    : data.error?.message || 'The provider rejected image generation through SillyTavern.' } }, { status: 502 });
+  if (data?.error) {
+    const message = typeof data.error === 'string' ? data.error : data.error?.message || '';
+    const limited = Number(data.error?.status || data.error?.code) === 429 || /too[\s_-]*many[\s_-]*requests?|rate[\s_-]*limit/i.test(message);
+    const quota = ngQuotaError(data);
+    return Response.json({ error: { message: quota
+      ? 'Provider quota exhausted. Check the account credit or quota before trying again.'
+      : isModels ? 'SillyTavern could not load provider models. Check the Base URL, API key and server connection.'
+        : message || 'The provider rejected image generation through SillyTavern.' }, quota_error: quota }, {
+      status: limited || quota ? 429 : 502,
+      headers: response.headers.has('Retry-After') ? { 'Retry-After': response.headers.get('Retry-After') } : {},
+    });
+  }
   return response;
 }
 
@@ -687,6 +766,7 @@ function ngSyncStudioConnection() {
   if (uc) uc.value = s.image.negativePreset || 'none';
   ngSyncSeedControls(document.getElementById('ng-studio-overlay'));
   refreshReferenceLocks();
+  ngSyncGenerationAvailability();
 }
 
 function ngBindStudioDesign() {
@@ -1180,6 +1260,7 @@ function closeStudio() {
   document.body?.classList.remove('ng-studio-open');
   if (escapeHandler) document.removeEventListener('keydown', escapeHandler);
   escapeHandler = null;
+  ngSyncGenerationAvailability();
 }
 function bindStudio() {
   document.getElementById('ng-close')?.addEventListener('click', closeStudio);
@@ -2253,6 +2334,7 @@ async function generateStudio() {
     button?.removeAttribute('disabled');
     button?.removeAttribute('aria-busy');
     if (button && buttonHtml) button.innerHTML = buttonHtml;
+    ngSyncGenerationAvailability();
   }
 }
 
@@ -2933,6 +3015,7 @@ async function postGeneration(route, candidate, state, signal) {
     reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable',
   });
   if (!response.ok) {
+    if (response.status === 429 && ngCooldownSeconds()) throw ngRateLimitError(ngCooldownSeconds());
     throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
   }
   const images = extractImages(data);
@@ -5797,32 +5880,30 @@ newStudio = function (mode, focus) {
 
 var ngV067BaseGenerateState = generateState;
 generateState = async function (state, label) {
-  const canvas = ngApplyCanvasSize(state);
-  if (canvas) {
-    debugAttempt({
-      route: 'preflight',
-      schema: 'resolved-canvas-size',
-      status: 0,
-      payload: {
-        preset: canvas.preset,
-        width: canvas.width,
-        height: canvas.height,
-        orientation: canvas.orientation,
-      },
-      response: canvas.corrected
-        ? { corrected_stale_values: canvas.original }
-        : { corrected_stale_values: false },
-    });
-  }
+  if (ngGenerationBusy) throw new Error('An image generation is already in progress. Wait for it to finish before starting another.');
+  const wait = ngCooldownSeconds();
+  if (wait) throw ngRateLimitError(wait);
+  ngGenerationBusy = true;
+  ngSyncGenerationAvailability();
   var originalPrompt = state?.prompt;
-  if (state && typeof originalPrompt === 'string') {
-    var enabled = state.artistMixEnabled !== false && ngV067ArtistPrefs().artistMixEnabled !== false;
-    state.prompt = ngComposeVisualStyle(ngV067ComposeArtistPrompt(originalPrompt, enabled), state.visualStyle || 'none');
-  }
   try {
+    const canvas = ngApplyCanvasSize(state);
+    if (canvas) {
+      debugAttempt({
+        route: 'preflight', schema: 'resolved-canvas-size', status: 0,
+        payload: { preset: canvas.preset, width: canvas.width, height: canvas.height, orientation: canvas.orientation },
+        response: canvas.corrected ? { corrected_stale_values: canvas.original } : { corrected_stale_values: false },
+      });
+    }
+    if (state && typeof originalPrompt === 'string') {
+      var enabled = state.artistMixEnabled !== false && ngV067ArtistPrefs().artistMixEnabled !== false;
+      state.prompt = ngComposeVisualStyle(ngV067ComposeArtistPrompt(originalPrompt, enabled), state.visualStyle || 'none');
+    }
     return await ngV067BaseGenerateState(state, label);
   } finally {
     if (state && typeof originalPrompt === 'string') state.prompt = originalPrompt;
+    ngGenerationBusy = false;
+    ngSyncGenerationAvailability();
   }
 };
 

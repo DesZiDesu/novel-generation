@@ -24,11 +24,17 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 
 ### Updating without clearing browser data
 
-The 0.8.1 manifest loads `index.js?v=0.8.1` and `style.css?v=0.8.1`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
+The current manifest loads `index.js?v=0.8.2` and `style.css?v=0.8.2`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
 
 The cache regression test is `CHROMIUM_PATH=/usr/bin/chromium node tests/cached-update.cjs`, or `BROWSER=webkit node tests/cached-update.cjs`, against an isolated SillyTavern installation. It warms the browser's real HTTP cache with a 0.8.0 fixture, publishes the current manifest, then verifies the current Studio loads while old cached assets and saved state remain available. The fixture serves manifests without caching so the test isolates stale JavaScript/CSS; a host that also serves a stale manifest must update/revalidate that metadata.
 
 ## Current scope
+
+### Rate limits in 0.8.2
+
+- One image-generation job can run at a time within the page, including Studio and quick generation. Repeated triggers are rejected before sending another provider request.
+- A temporary HTTP 429 stops the batch and starts a visible Generate-button countdown. `Retry-After` seconds or dates are honored when available; otherwise the wait defaults to 60 seconds. SillyTavern's Custom API backend can replace an upstream 429 with HTTP 200 and discard its headers; the extension recognizes its Too Many Requests message and applies the default wait. Closing/reopening Studio keeps the cooldown for that Base URL and key within the page session.
+- The end of the countdown permits a manual retry. It does not automatically submit or bill for another image, switch models, or change Base URLs. Exhausted account quota receives a separate message because waiting alone cannot restore credit. A cooldown cannot restore a provider's disabled, expired or unavailable upstream token pool.
 
 ### Studio 0.8
 
