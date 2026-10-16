@@ -5,9 +5,12 @@ const path = require('node:path');
 const vm = require('node:vm');
 
 function runtime(fetchImpl) {
+  let clock = Date.now();
   const context = { extensionSettings: {}, saveSettingsDebounced() {}, getRequestHeaders: () => ({ 'Content-Type': 'application/json', 'X-CSRF-Token': 'test-csrf' }) };
   const sandbox = {
     console, URL, Headers, Response, AbortController, DOMException, TextDecoder, Blob,
+    Date: class extends Date { static now() { return clock; } },
+    __advanceClock(ms) { clock += ms; },
     performance, structuredClone, atob, btoa,
     setTimeout: () => 1, clearTimeout() {}, setInterval: () => 1, clearInterval() {},
     fetch: fetchImpl,
@@ -29,7 +32,8 @@ function runtime(fetchImpl) {
     ngCapabilitiesCurrent, ngAdvancedCapabilityLabel, ngGenerationSeed,
     generateState, postGeneration, ngBuildNativeEnvelope, requestCandidates,
     modelIds, ngModelLabel, ngIsNaiImageModel, ngIsNai5Model, ngNewSeed, ngComposeVisualStyle,
-    ngProviderFetch, ngFetchModels, ngPngGenerationMetadata,
+    ngProviderFetch, ngFetchModels, ngPngGenerationMetadata, ngCooldownSeconds, ngRetryDelaySeconds,
+    advanceClock: globalThis.__advanceClock,
     caps: ngProviderCaps, logs: debugLog,
     setKey(value) { apiKey = value; settings().proxyApiKey = value; },
     prepareWith(fn) { ngPrepareAdvancedImages = fn; },
@@ -451,6 +455,89 @@ test('PNG generation metadata preserves an actual zero seed and rejects broken c
   assert.deepEqual(JSON.parse(JSON.stringify(api.ngPngGenerationMetadata('data:image/png;base64,' + png.toString('base64')))), { seed: 0, steps: 23 });
   assert.equal(api.ngPngGenerationMetadata('https://example.com/image.png'), null);
   assert.equal(api.ngPngGenerationMetadata('data:image/png;base64,' + png.subarray(0, 20).toString('base64')), null);
+});
+
+test('Retry-After supports seconds and HTTP dates with a conservative missing-header default', () => {
+  const api = runtime();
+  const now = Date.parse('2026-10-16T00:00:00Z');
+  assert.equal(api.ngRetryDelaySeconds('15', now), 15);
+  assert.equal(api.ngRetryDelaySeconds('0', now), 1);
+  assert.equal(api.ngRetryDelaySeconds('-1', now), 60);
+  assert.equal(api.ngRetryDelaySeconds('Fri, 16 Oct 2026 00:00:30 GMT', now), 30);
+  assert.equal(api.ngRetryDelaySeconds(null, now), 60);
+  assert.equal(api.ngRetryDelaySeconds('invalid', now), 60);
+});
+
+test('429 stops the batch, blocks repeated generation and permits a manual retry after Retry-After', async () => {
+  let calls = 0;
+  const api = runtime(async () => ++calls === 1
+    ? Response.json({ error: { message: 'Too Many Requests' } }, { status: 429, headers: { 'Retry-After': '2' } })
+    : Response.json({ data: [{ url: 'https://example.test/image.png' }] }));
+  await assert.rejects(api.generateState(state({ n: 3 })), error => error.status === 429);
+  assert.equal(calls, 1);
+  assert.equal(api.ngCooldownSeconds(), 2);
+  await assert.rejects(api.generateState(state()), /wait 2 seconds/);
+  assert.equal(calls, 1, 'cooldown must stop another upstream request');
+  api.advanceClock(2100);
+  assert.equal(api.ngCooldownSeconds(), 0);
+  const result = await api.generateState(state());
+  assert.equal(result.images.length, 1);
+  assert.equal(calls, 2, 'expiry permits a user retry without an automatic retry');
+});
+
+test('ST-wrapped Too Many Requests keeps status 429 and starts a cooldown without changing models', async () => {
+  const bodies = [];
+  const api = runtime(async (_url, options) => {
+    bodies.push(JSON.parse(options.body));
+    return Response.json({ error: { message: 'Too Many Requests' }, quota_error: false });
+  });
+  api.settings().serverBridgeBaseUrl = 'https://new.xfxai.top/v1';
+  await assert.rejects(api.generateState(state()), error => error.status === 429);
+  assert.equal(api.ngCooldownSeconds(), 60);
+  assert.equal(bodies.length, 1);
+  assert.equal(JSON.parse(bodies[0].custom_include_body).model, 'nai-diffusion-5-full');
+  await assert.rejects(api.generateState(state()), /wait 60 seconds/);
+  assert.equal(bodies.length, 1);
+});
+
+test('quota exhaustion is distinguished from a temporary rate limit', async () => {
+  const api = runtime(async () => Response.json({ error: { message: 'Too Many Requests' }, quota_error: true }));
+  api.settings().serverBridgeBaseUrl = 'https://new.xfxai.top/v1';
+  await assert.rejects(api.generateState(state()), /quota exhausted/);
+  assert.equal(api.ngCooldownSeconds(), 0, 'waiting alone cannot restore exhausted quota');
+});
+
+test('cooldown belongs to the connection that received it, including its credential', async () => {
+  const api = runtime(async () => Response.json({}, { status: 429, headers: { 'Retry-After': '12' } }));
+  await api.ngProviderFetch('https://new.xfxai.top/v1/chat/completions', { method: 'POST', body: '{"model":"nai-diffusion-5-full"}' });
+  assert.equal(api.ngCooldownSeconds(), 12);
+  api.setKey('another-user-key');
+  assert.equal(api.ngCooldownSeconds(), 0);
+  api.setKey('test-key');
+  assert.equal(api.ngCooldownSeconds(), 12);
+  api.settings().proxyBaseUrl = 'https://another.example/v1';
+  assert.equal(api.ngCooldownSeconds(), 0);
+});
+
+test('Studio and quick generation cannot submit overlapping jobs or alter the running prompt', async () => {
+  let finish;
+  let calls = 0;
+  const api = runtime(async () => {
+    if (++calls === 1) await new Promise(resolve => { finish = resolve; });
+    return Response.json({ data: [{ url: 'https://example.test/image.png' }] });
+  });
+  const input = state({ prompt: 'a cat', visualStyle: 'anime' });
+  const first = api.generateState(input);
+  await new Promise(resolve => setImmediate(resolve));
+  const runningPrompt = input.prompt;
+  await assert.rejects(api.generateState(input), /already in progress/);
+  assert.equal(input.prompt, runningPrompt);
+  assert.equal(calls, 1);
+  finish();
+  await first;
+  assert.equal(input.prompt, 'a cat');
+  await api.generateState(input);
+  assert.equal(calls, 2);
 });
 
 test('RVL shop X/MI routes put generation controls in Parameter chat text', async () => {
