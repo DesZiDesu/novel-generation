@@ -429,6 +429,35 @@ test('OpenAI NAI wrappers receive seed and controls at both supported levels', a
   assert.equal(body.parameters.negative_prompt, 'lowres');
 });
 
+test('OpenAI NAI chat wrappers receive portrait, square and landscape dimensions at the top level', async () => {
+  for (const model of ['[DM]-[AG]-[OAI]-nai-diffusion-5-full-[0.2]', '[DM]-[AG]-[OAI]-nai-diffusion-4-5-full-[0.1]']) {
+    for (const [preset, width, height, aspect] of [['portrait', 832, 1216, '2:3'], ['square', 1024, 1024, '1:1'], ['landscape', 1216, 832, '3:2']]) {
+      const requests = [];
+      const api = runtime(async (url, options) => {
+        if (!url.endsWith('/chat/completions')) return new Response('missing', { status: 404 });
+        requests.push(JSON.parse(options.body));
+        return Response.json({ choices: [{ message: { content: 'https://example.test/image.png' } }] });
+      });
+      api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+      api.settings().model = model;
+      // Deliberately stale manual dimensions must not override a fixed preset.
+      await api.generateState(state({ preset, width: 512, height: 512, seed: 123456 }));
+      assert.equal(requests.length, 1);
+      const body = requests[0];
+      assert.equal(body.size, `${width}x${height}`);
+      assert.equal(body.width, width); assert.equal(body.height, height);
+      assert.equal(body.aspect_ratio, aspect);
+      for (const config of [body.image_config, body.image_generation, body.image_generation.image_config]) {
+        assert.equal(config.size, body.size);
+        assert.equal(config.width, width); assert.equal(config.height, height);
+        assert.equal(config.aspect_ratio, aspect);
+      }
+      assert.equal(body.image_generation.parameters.width, width);
+      assert.equal(body.image_generation.parameters.height, height);
+    }
+  }
+});
+
 test('uncertain generation outcomes are surfaced without another paid attempt', async () => {
   for (const outcome of ['network', 200, 500]) {
     let requests = 0;

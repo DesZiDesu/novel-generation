@@ -64,3 +64,18 @@ NAI 5 **Full** channels were selected explicitly in Studio, without Curated call
 The successful OpenAI-channel sample had no observed spiral eyes, but does not resolve X channel availability or seed fidelity. The extension now recognizes ST-wrapped rate limits as 429, applies a visible cooldown, prevents overlapping image jobs, and allows a manual retry after the wait without silently resubmitting.
 
 Public endpoint research found the [RVL shop guide](https://rvlconnect.com/blog/manual-guide-shop-api) explicitly pairs shop keys with `https://shop.rvlconnect.com/v1`. [XFX's public status configuration](https://new.xfxai.top/api/status) advertises `https://new.xfxai.top` and backup `https://new.xfxaigc.com`, with documentation at `https://doc.xfxaigc.com/`. The extension's documented OpenAI-compatible path adds `/v1`. These are separate provider accounts; the shop credential was not sent to XFX or any newly discovered host. No undocumented private upstream URL was established.
+
+## 2026-10-16 — OpenAI NAI 5 canvas correction, 0.8.3
+
+The earlier portrait failure on `[DM]-[AG]-[OAI]-nai-diffusion-5-full-[0.2]` was caused by missing top-level canvas fields in the extension's chat adapter. The 0.8.2 request carried 832 × 1216 inside `image_config` and `image_generation`; the response was 1216 × 832. Adding top-level `size`, `width`, `height` and `aspect_ratio` to the same request returned an actual 832 × 1216 PNG.
+
+The correction was then tested in the installed extension through SillyTavern's normal Custom API backend with the generic CORS proxy disabled:
+
+| Studio selection | Top-level size | Decoded PNG size | Result |
+| --- | --- | --- | --- |
+| Portrait | 832 × 1216 | 832 × 1216 | Matched |
+| Square | 1024 × 1024 | 1024 × 1024 | Matched |
+
+Both calls used the same DM/OpenAI NAI 5 Full model and a benign portrait prompt. PC and mobile Studio previews were captured. A separate direct request also placed seed, steps and other controls at the top level; its PNG still reported seed 0 and 23 steps. Seed/step fidelity remains a provider limitation in the tested request shapes, and the existing seed mismatch warning stays visible. The earlier broad claim that the OpenAI channel could not honor portrait dimensions is superseded by this correction.
+
+The 41 request regressions include Portrait/Square/Landscape matrices for NAI 5 and 4.5 OpenAI chat wrappers, checking matching top-level and nested dimensions and repair of stale preset dimensions. The hosted backend test also asserts that the real SillyTavern server forwards the top-level portrait size and aspect ratio intact.

@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.8.2';
+const VERSION = '0.8.3';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -2072,9 +2072,9 @@ function chatPayloadFrom(payload, state) {
     model,
     messages: [{ role: 'user', content: state.prompt.trim() }],
     modalities: ['text', 'image'],
-    // Chat-completion image wrappers commonly read canvas controls here rather
-    // than from a provider-specific nested envelope. These are the same values,
-    // never reversed: Portrait remains 832 by 1216 at every layer.
+    // RVL's OpenAI NAI chat wrapper reads canvas controls at the top level.
+    // Keep the same resolved canvas in both compatibility envelopes as well.
+    ...imageConfig,
     image_config: imageConfig,
     image_generation: cleanObject({
       ...payload,
