@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.8.3';
+const VERSION = '0.8.4';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -71,8 +71,8 @@ let mountAttempts = 0;
 let studioLaunchTimer = null;
 let studioLaunchSequence = 0;
 let ngGenerationBusy = false;
-let ngRateLimitTimer = null;
-const ngProviderCooldowns = new Map();
+let ngConstantGeneration = null;
+const NG_CONSTANT_RETRY_MS = 2000;
 const gallery = [];
 const debugLog = [];
 const unavailableAutoRoutes = new Set();
@@ -504,50 +504,79 @@ const headers = () => ({ 'Content-Type': 'application/json', Accept: 'applicatio
 
 // Resolve CORS transport with the read-only model request. Generation requests
 // use that choice once; retrying a failed POST could generate and bill twice.
-function ngCooldownSeconds(connection = { base: base(), key: apiKey }) {
-  const entry = ngProviderCooldowns.get(connection.base);
-  return entry?.key === connection.key ? Math.max(0, Math.ceil((entry.until - Date.now()) / 1000)) : 0;
-}
-
-function ngRateLimitError(seconds) {
-  return Object.assign(new Error(`Provider rate limit (429). Please wait ${seconds} seconds before generating again.`), { status: 429, retryAfter: seconds });
-}
-
-function ngRetryDelaySeconds(value, now = Date.now()) {
-  if (value == null || String(value).trim() === '') return 60;
-  const seconds = Number(value);
-  if (Number.isFinite(seconds)) return seconds >= 0 ? Math.max(1, Math.ceil(seconds)) : 60;
-  const date = Date.parse(value);
-  return Number.isFinite(date) ? Math.max(1, Math.ceil((date - now) / 1000)) : 60;
+function ngProviderFailure(data, status = 429) {
+  let detail = String(typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '').slice(0, 600);
+  if (apiKey) detail = detail.split(apiKey).join('[redacted]');
+  const unavailable = /no (?:available|usable) (?:upstream )?(?:tokens?|channels?)|当前没有可用的\s*token|无可用(?:的)?(?:渠道|令牌|账号)/i.test(detail);
+  const reason = ngQuotaError(data) ? 'Provider quota exhausted. Check the account credit or quota.'
+    : unavailable ? 'Provider upstream channel unavailable.' : 'Provider rate limit (429).';
+  return Object.assign(new Error(`${reason}${detail ? ` ${detail}` : ''}`), { status, providerMessage: detail });
 }
 
 function ngSyncGenerationAvailability() {
   const button = document.getElementById('ng-generate');
-  if (!button) {
-    if (ngRateLimitTimer) clearInterval(ngRateLimitTimer);
-    ngRateLimitTimer = null;
-    return;
+  if (button) button.disabled = button.getAttribute('aria-busy') === 'true' || ngGenerationBusy;
+  const constant = document.getElementById('ng-constant-generate');
+  if (constant) {
+    const active = Boolean(ngConstantGeneration);
+    constant.disabled = !active && ngGenerationBusy;
+    constant.setAttribute('aria-pressed', String(active));
+    constant.classList.toggle('is-active', active);
+    constant.innerHTML = active ? '<i class="fa-solid fa-stop"></i><span>Stop constant generation</span>'
+      : '<i class="fa-solid fa-repeat"></i><span>Constant generation</span>';
   }
-  const seconds = ngCooldownSeconds();
-  const busy = button.getAttribute('aria-busy') === 'true';
-  button.disabled = busy || ngGenerationBusy || seconds > 0;
-  if (seconds > 0) {
-    if (!busy) {
-      button._ngReadyHtml ??= button.innerHTML;
-      button.textContent = `Wait ${seconds}s`;
-    }
-    const out = document.getElementById('ng-gen-status');
-    if (out) out.textContent = `Provider rate limit. Try again in ${seconds}s.`;
-    if (!ngRateLimitTimer) ngRateLimitTimer = setInterval(ngSyncGenerationAvailability, 1000);
-  } else {
-    if (button._ngReadyHtml != null) {
-      button.innerHTML = button._ngReadyHtml;
-      delete button._ngReadyHtml;
+}
+
+function ngStopConstantGeneration(message = 'Constant generation stopped.') {
+  const run = ngConstantGeneration;
+  if (!run) return;
+  run.stopped = true;
+  clearTimeout(run.timer);
+  run.resume?.();
+  ngConstantGeneration = null;
+  ngSyncGenerationAvailability();
+  const out = document.getElementById('ng-gen-status');
+  if (out && message) out.textContent = ngGenerationBusy ? `${message} Current request is finishing.` : message;
+}
+
+async function ngStartConstantGeneration(attempt) {
+  if (ngConstantGeneration || ngGenerationBusy) return;
+  const run = { stopped: false, attempts: 0, owner: studio, connection: { base: base(), key: apiKey, model: settings().model } };
+  ngConstantGeneration = run;
+  ngSyncGenerationAvailability();
+  try {
+    while (!run.stopped) {
+      if (studio !== run.owner || base() !== run.connection.base || apiKey !== run.connection.key || settings().model !== run.connection.model) {
+        ngStopConstantGeneration('Constant generation stopped: Studio, connection or model changed.');
+        break;
+      }
+      run.attempts++;
+      // A transient 404 must not make later constant attempts skip the route.
+      for (const route of ['images', 'chat']) unavailableAutoRoutes.delete(ngUnavailableRouteKey(route));
+      let outcome;
+      try { outcome = await (attempt ? attempt(run) : generateStudio({ constantRun: run })); }
+      catch (error) { outcome = { ok: false, error }; }
+      if (run.stopped) break;
       const out = document.getElementById('ng-gen-status');
-      if (out) out.textContent = 'Ready to try again. The provider may still be busy.';
+      if (outcome?.ok) {
+        if (out) out.textContent += ` Constant generation completed after ${run.attempts} attempt${run.attempts === 1 ? '' : 's'}.`;
+        break;
+      }
+      if (out) {
+        const detail = outcome?.error?.message || 'No image returned.';
+        out.textContent = `Constant generation: attempt ${run.attempts} failed; retrying in 2s. ${detail.slice(0, 160)}`;
+        out.title = detail;
+      }
+      await new Promise(resolve => {
+        run.resume = resolve;
+        run.timer = setTimeout(resolve, NG_CONSTANT_RETRY_MS);
+      });
+      run.resume = null;
     }
-    if (ngRateLimitTimer) clearInterval(ngRateLimitTimer);
-    ngRateLimitTimer = null;
+  } finally {
+    clearTimeout(run.timer);
+    if (ngConstantGeneration === run) ngConstantGeneration = null;
+    ngSyncGenerationAvailability();
   }
 }
 
@@ -556,26 +585,12 @@ function ngQuotaError(data) {
 }
 
 async function ngProviderFetch(url, options = {}) {
-  const connection = { base: base(), key: apiKey };
-  const generation = options.method?.toUpperCase() === 'POST' && options.body && options.body !== '{}';
-  const seconds = ngCooldownSeconds(connection);
-  if (generation && seconds) throw ngRateLimitError(seconds);
   let response;
   if (new URL(url).origin === new URL(base()).origin) {
     if (settings().serverBridgeBaseUrl === base()) response = await ngServerBridgeFetch(url, options);
     else if (settings().corsProxyBaseUrl === base()) response = await fetch(`/proxy/${url}`, options);
   }
   response ??= await fetch(url, options);
-  if (generation && response.status === 429) {
-    let data;
-    try { data = await response.clone().json(); } catch { /* A plain-text 429 still needs a cooldown. */ }
-    if (!ngQuotaError(data)) {
-      const delay = ngRetryDelaySeconds(response.headers.get('Retry-After'));
-      const previous = ngProviderCooldowns.get(connection.base);
-      ngProviderCooldowns.set(connection.base, { key: connection.key, until: Math.max(previous?.key === connection.key ? previous.until : 0, Date.now() + delay * 1000) });
-      ngSyncGenerationAvailability();
-    }
-  }
   return response;
 }
 
@@ -605,7 +620,10 @@ async function ngServerBridgeFetch(url, options = {}) {
     // verbatim instead of letting the chat backend rebuild the image payload.
     custom_include_body: JSON.stringify(payload),
     custom_exclude_body: JSON.stringify('stream' in payload ? [] : ['stream']),
-    model: payload.model, messages: payload.messages, stream: false,
+    // Ask ST to forward the raw HTTP response, retaining upstream status/body.
+    // custom_include_body/exclude_body still keep the actual provider request
+    // non-streaming while preserving our original provider JSON fields.
+    model: payload.model, messages: payload.messages, stream: true,
   };
   const response = await fetch(`/api/backends/chat-completions/${isModels ? 'status' : 'generate'}`, {
     method: 'POST', headers: ctx().getRequestHeaders(), body: JSON.stringify(body), signal: options.signal,
@@ -1137,7 +1155,7 @@ function studioHtml() {
       </aside>
       <section class="ng-studio-stage"><header class="ng-stage-header"><div><span class="ng-card-eyebrow">YOUR CANVAS</span><h2>Preview</h2></div><span id="ng-stage-size" class="ng-stage-size">${s.width} × ${s.height}</span></header><section id="ng-preview" class="ng-studio-preview"><div class="ng-preview-empty"><div class="ng-empty-frame"><i class="fa-regular fa-image"></i><span></span></div><strong>Image preview</strong><span>Generated images will appear here.</span><small>Portrait · Square · Landscape</small></div></section><footer class="ng-stage-meta"><span id="ng-last-seed"><i class="fa-solid fa-fingerprint"></i> Your generation details will appear here</span><button id="ng-reuse-seed" class="menu_button" type="button" hidden><i class="fa-solid fa-rotate-left"></i> Reuse seed</button></footer></section>
     </main>
-    <footer class="ng-studio-footer"><div id="ng-gen-status" class="ng-generation-status" role="status">Ready<span class="ng-shortcut">Ctrl / ⌘ + Enter to generate</span></div><div class="ng-footer-actions"><div class="ng-quick-seed"><div class="ng-quick-seed-number"><small>SEED</small><strong id="ng-quick-seed-value">${Number(s.seed) < 0 ? 'Every image' : s.seed}</strong></div><div class="ng-quick-seed-modes" role="group" aria-label="Seed mode for NAI 5" ${ngIsNai5Model() ? '' : 'hidden'}><button class="menu_button" type="button" data-ng-seed-mode="auto" aria-label="Auto seed for NAI 5" aria-pressed="${Number(s.seed) < 0}" title="Choose a fresh seed for each NAI 5 image"><i class="fa-solid fa-shuffle"></i><span>Auto</span></button><button class="menu_button" type="button" data-ng-seed-mode="fixed" aria-label="Fixed seed" aria-pressed="${Number(s.seed) >= 0}" title="Keep the current or last used seed"><i class="fa-solid fa-lock"></i><span>Fixed</span></button></div><button class="menu_button ng-quick-seed-roll" type="button" data-ng-seed-target="ng-studio-seed" aria-label="Roll a new seed and use Fixed mode" title="New seed · switch to Fixed"><i class="fa-solid fa-dice"></i><span>New seed</span></button><span id="ng-seed-mode-status" class="ng-sr-only" role="status" aria-live="polite"></span></div><button id="ng-generate" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate image</span><i class="fa-solid fa-arrow-right"></i></button></div></footer>
+    <footer class="ng-studio-footer"><div id="ng-gen-status" class="ng-generation-status" role="status">Ready<span class="ng-shortcut">Ctrl / ⌘ + Enter to generate</span></div><div class="ng-footer-actions"><div class="ng-quick-seed"><div class="ng-quick-seed-number"><small>SEED</small><strong id="ng-quick-seed-value">${Number(s.seed) < 0 ? 'Every image' : s.seed}</strong></div><div class="ng-quick-seed-modes" role="group" aria-label="Seed mode for NAI 5" ${ngIsNai5Model() ? '' : 'hidden'}><button class="menu_button" type="button" data-ng-seed-mode="auto" aria-label="Auto seed for NAI 5" aria-pressed="${Number(s.seed) < 0}" title="Choose a fresh seed for each NAI 5 image"><i class="fa-solid fa-shuffle"></i><span>Auto</span></button><button class="menu_button" type="button" data-ng-seed-mode="fixed" aria-label="Fixed seed" aria-pressed="${Number(s.seed) >= 0}" title="Keep the current or last used seed"><i class="fa-solid fa-lock"></i><span>Fixed</span></button></div><button class="menu_button ng-quick-seed-roll" type="button" data-ng-seed-target="ng-studio-seed" aria-label="Roll a new seed and use Fixed mode" title="New seed · switch to Fixed"><i class="fa-solid fa-dice"></i><span>New seed</span></button><span id="ng-seed-mode-status" class="ng-sr-only" role="status" aria-live="polite"></span></div><div class="ng-generate-buttons"><button id="ng-constant-generate" class="menu_button" type="button" aria-pressed="false" title="Retry one image every 2 seconds after any error, until an image succeeds. Stop ends further attempts; a sent request may finish."><i class="fa-solid fa-repeat"></i><span>Constant generation</span></button><button id="ng-generate" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate image</span><i class="fa-solid fa-arrow-right"></i></button></div></div></footer>
   </div>`;
 }
 
@@ -1256,6 +1274,7 @@ function openStudio(mode = 'free', focus = 'prompt') {
 }
 
 function closeStudio() {
+  ngStopConstantGeneration(false);
   document.getElementById('ng-studio-overlay')?.remove();
   document.body?.classList.remove('ng-studio-open');
   if (escapeHandler) document.removeEventListener('keydown', escapeHandler);
@@ -1345,6 +1364,10 @@ function bindStudio() {
   }
   document.querySelectorAll('#ng-studio-overlay .ng-size-choice').forEach(btn => btn.addEventListener('click', () => setSize('studio', btn.dataset.ngSize)));
   document.getElementById('ng-generate')?.addEventListener('click', generateStudio);
+  document.getElementById('ng-constant-generate')?.addEventListener('click', () => {
+    if (ngConstantGeneration) ngStopConstantGeneration();
+    else void ngStartConstantGeneration();
+  });
   document.getElementById('ng-upscale-2x')?.addEventListener('click', () => runUpscale('2x'));
   document.getElementById('ng-upscale-4k')?.addEventListener('click', () => runUpscale('4k'));
   document.getElementById('ng-debug-clear')?.addEventListener('click', () => { debugLog.splice(0); renderDebug(); });
@@ -2294,32 +2317,38 @@ function rememberImages(images, state, extra = {}) {
   ngV068UpdateGalleryCount();
 }
 
-async function generateStudio() {
+async function generateStudio(options = {}) {
+  if (!options.constantRun) ngStopConstantGeneration(false);
+  const state = studio;
+  const requestState = { ...state, ...(options.constantRun ? { n: 1 } : {}) };
+  const requestedModel = settings().model;
   const button = document.getElementById('ng-generate');
   const out = document.getElementById('ng-gen-status');
   const buttonHtml = button?.innerHTML;
   button?.setAttribute('disabled', 'disabled');
   button?.setAttribute('aria-busy', 'true');
   if (button) button.innerHTML = '<i class="fa-solid fa-circle-notch fa-spin"></i><span>Generating…</span>';
-  if (out) out.textContent = 'Generating…';
+  if (out) { out.title = ''; out.textContent = options.constantRun ? `Constant generation: attempt ${options.constantRun.attempts}…` : 'Generating…'; }
   try {
-    const result = await generateState(studio);
-    studio.generated = result.images;
+    const result = await generateState(requestState);
+    rememberImages(result.images, requestState, { schema: result.schema, route: result.route, model: requestedModel });
+    if (studio !== state) return { ok: true, result, stale: true };
+    state.generated = result.images;
     const requestedSeeds = result.seeds || [result.requestSeed];
     const metadata = result.images.map(ngPngGenerationMetadata);
     const seedMismatch = metadata.some((item, index) => item && requestedSeeds[index] !== undefined && item.seed !== requestedSeeds[index]);
-    studio.lastSeeds = metadata.every(Boolean) ? metadata.map(item => item.seed) : requestedSeeds.filter(seed => Number.isInteger(seed) && seed >= 0);
+    state.lastSeeds = metadata.every(Boolean) ? metadata.map(item => item.seed) : requestedSeeds.filter(seed => Number.isInteger(seed) && seed >= 0);
     const seedInfo = document.getElementById('ng-last-seed');
     const seedLabel = metadata.every(Boolean) ? 'Image seed' : 'Requested seed (unverified)';
-    if (seedInfo) seedInfo.textContent = studio.lastSeeds.length ? `${seedLabel} ${studio.lastSeeds.join(' · ')}${seedMismatch ? ` · requested ${requestedSeeds.join(' / ')}` : ''}  /  ${studio.width} × ${studio.height}` : `${studio.width} × ${studio.height} · ${settings().model}`;
+    if (seedInfo) seedInfo.textContent = state.lastSeeds.length ? `${seedLabel} ${state.lastSeeds.join(' · ')}${seedMismatch ? ` · requested ${requestedSeeds.join(' / ')}` : ''}  /  ${state.width} × ${state.height}` : `${state.width} × ${state.height} · ${settings().model}`;
     const reuseSeed = document.getElementById('ng-reuse-seed');
-    if (reuseSeed) reuseSeed.hidden = !studio.lastSeeds.length;
+    if (reuseSeed) reuseSeed.hidden = !state.lastSeeds.length;
     showImages(result.images);
-    rememberImages(result.images, studio, { schema: result.schema, route: result.route });
+
     if (out) {
       out.textContent = `Generated ${result.images.length} image${result.images.length === 1 ? '' : 's'}.`;
       if (seedMismatch) out.textContent += ' Provider seed differs from the requested seed. Auto/Fixed was not applied by this route.';
-      if (!isDirectNovelAI() && (hasAdvancedReferences(studio) || studio.source)) {
+      if (!isDirectNovelAI() && (hasAdvancedReferences(requestState) || state.source)) {
         out.textContent += ' The proxy has not confirmed that the source, mask or reference fields were applied.';
       }
     }
@@ -2327,9 +2356,11 @@ async function generateStudio() {
       debugAttempt({ route: 'parameter-verification', schema: result.schema, model: settings().model, requested_seeds: requestedSeeds, image_metadata: metadata, seed_verified: false });
       toast('warning', 'The provider ignored the requested seed. Check Request details or choose another NAI route.');
     }
+    return { ok: true, result };
   } catch (error) {
-    if (out) out.textContent = `Generation failed: ${error.message}`;
-    toast('error', error.message);
+    if (out) { out.textContent = `Generation failed: ${error.message}`; out.title = error.providerMessage || error.message; }
+    if (!options.constantRun) toast('error', error.message);
+    return { ok: false, error };
   } finally {
     button?.removeAttribute('disabled');
     button?.removeAttribute('aria-busy');
@@ -3015,7 +3046,8 @@ async function postGeneration(route, candidate, state, signal) {
     reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable',
   });
   if (!response.ok) {
-    if (response.status === 429 && ngCooldownSeconds()) throw ngRateLimitError(ngCooldownSeconds());
+    if (ngQuotaError(data)) throw Object.assign(new Error('Provider quota exhausted. Check the account credit or quota before trying again.'), { status: 429 });
+    if (response.status === 429) throw ngProviderFailure(data, response.status);
     throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
   }
   const images = extractImages(data);
@@ -5233,7 +5265,7 @@ switchTab = function (tab) {
 var ngV055BaseGenerateStudio = generateStudio;
 generateStudio = async function () {
   var result = await ngV055BaseGenerateStudio.apply(this, arguments);
-  if (ngV055IsMobile() && document.querySelector('#ng-preview img')) ngV055SetMobilePane('preview');
+  if (result?.ok && !result.stale && ngV055IsMobile() && document.querySelector('#ng-preview img')) ngV055SetMobilePane('preview');
   return result;
 };
 
@@ -5247,6 +5279,7 @@ openStudio = function (mode, focus) {
 ngV055SetVersionLabels();
 recoverStaleStudioState();
 setTimeout(recoverStaleStudioState, 0);
+window.addEventListener?.('pagehide', () => ngStopConstantGeneration(false));
 
 
 /* ===== Runtime 16: character prompt routing ===== */
@@ -5881,8 +5914,6 @@ newStudio = function (mode, focus) {
 var ngV067BaseGenerateState = generateState;
 generateState = async function (state, label) {
   if (ngGenerationBusy) throw new Error('An image generation is already in progress. Wait for it to finish before starting another.');
-  const wait = ngCooldownSeconds();
-  if (wait) throw ngRateLimitError(wait);
   ngGenerationBusy = true;
   ngSyncGenerationAvailability();
   var originalPrompt = state?.prompt;

@@ -79,3 +79,16 @@ The correction was then tested in the installed extension through SillyTavern's 
 Both calls used the same DM/OpenAI NAI 5 Full model and a benign portrait prompt. PC and mobile Studio previews were captured. A separate direct request also placed seed, steps and other controls at the top level; its PNG still reported seed 0 and 23 steps. Seed/step fidelity remains a provider limitation in the tested request shapes, and the existing seed mismatch warning stays visible. The earlier broad claim that the OpenAI channel could not honor portrait dimensions is superseded by this correction.
 
 The 41 request regressions include Portrait/Square/Landscape matrices for NAI 5 and 4.5 OpenAI chat wrappers, checking matching top-level and nested dimensions and repair of stale preset dimensions. The hosted backend test also asserts that the real SillyTavern server forwards the top-level portrait size and aspect ratio intact.
+
+## 2026-10-17 — Immediate retry and Constant generation, 0.8.4
+
+The user requested removal of the extension cooldown and an explicit retry-until-success mode. Manual Generate now becomes available immediately after a job finishes, including a 429 carrying a 60-second retry hint. Constant generation attempts one image at a time, retries all errors after two seconds, and stops on the first image, Stop, Studio closure, page exit, or a changed model/connection. Stop prevents future attempts while allowing an already-sent request to finish.
+
+Validation:
+
+- All 44 Node behavior tests pass, covering immediate manual retry, all-error constant retry, sequential attempts, transient 404 route recovery, stop while waiting/in-flight, and connection changes.
+- The hosted integration test uses a real SillyTavern 1.19.0 server with generic CORS proxy disabled. Chromium and WebKit each exercised 17 local upstream generation requests across PC and mobile views. The test covers 429, authentication errors, exhausted quota, HTTP 500, HTTP 200 without images, eventual success, manual override, Stop, and closing Studio. It also checks that both buttons fit in the viewport and preserves the exact provider payload.
+- The WebKit HTTP-cache test upgraded cached 0.8.0 assets to 0.8.4 while preserving cookies, local storage, saved settings, and legacy cached assets. No cache-clearing response was used.
+- A bounded live Constant generation check used the existing RVL Shop connection and `[X]-[AG]-nai-diffusion-5-full-[0.21]`. Model discovery returned 27 NAI models. Three generation attempts produced no image; the final error retained HTTP 429 and the original upstream message that no usable token was available (disabled, expired, or cooling down). The test was stopped after three attempts; the production mode itself has no attempt cap. This confirms retry/error transport behavior, not restoration of the provider's token pool.
+
+The ST bridge uses raw response forwarding, while custom include/exclude fields keep the actual provider image request non-streaming. Manual attempts remain single-attempt operations; automatic retries happen only when Constant generation is explicitly enabled.

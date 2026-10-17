@@ -1730,3 +1730,17 @@ body.ng-image-viewer-open {
   #ng-studio-overlay .ng-quick-seed-roll { min-width: 48px; }
   #ng-studio-overlay .ng-quick-seed-number { min-width: 58px; }
 }
+
+/* Manual generation stays available between constant-generation attempts. */
+#ng-studio-overlay .ng-studio-shell { grid-template-rows: 76px minmax(0,1fr) auto; }
+#ng-studio-overlay .ng-footer-actions { flex-direction: column; align-items: stretch; gap: 7px; width: min(610px,65%); }
+#ng-studio-overlay .ng-quick-seed { justify-content: space-between; }
+#ng-studio-overlay .ng-generate-buttons { display: grid; grid-template-columns: minmax(0,1fr) minmax(0,1.2fr); gap: 8px; }
+#ng-studio-overlay .ng-generate-buttons #ng-generate { min-width: 0; width: 100%; }
+#ng-studio-overlay #ng-constant-generate { width: 100%; box-sizing: border-box; min-height: 46px; min-width: 0; margin: 0; padding: 8px 12px; border: 1px solid #666; border-radius: 0; background: #282828; color: #eee; font-size: 12px; line-height: 1.2; white-space: normal; }
+#ng-studio-overlay #ng-constant-generate.is-active { background: #ddd; color: #111; border-color: #fff; }
+@media (max-width: 760px), (hover: none) and (pointer: coarse) {
+  #ng-studio-overlay .ng-footer-actions { width: 100%; }
+  #ng-studio-overlay .ng-generate-buttons { grid-template-columns: minmax(0,1fr) minmax(0,1fr); }
+  #ng-studio-overlay #ng-constant-generate, #ng-studio-overlay .ng-generate-buttons #ng-generate { padding: 8px; font-size: 11px; gap: 6px; }
+}

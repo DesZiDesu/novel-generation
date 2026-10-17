@@ -15,7 +15,7 @@ fs.mkdirSync(artifactDir, { recursive: true });
 
 (async () => {
   const requests = [];
-  let fixture, failGeneration = false;
+  let fixture, failGeneration = false, releaseGeneration;
   const upstream = http.createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
@@ -24,12 +24,22 @@ fs.mkdirSync(artifactDir, { recursive: true });
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     if (req.method === 'GET' && req.url === '/v1/models') return res.end(JSON.stringify({ data: ['gpt-4o', 'nai-diffusion-5-full', 'nai-diffusion-4-5-full'].map(id => ({ id })) }));
     if (req.method === 'POST' && req.url === '/v1/chat/completions') {
-      if (failGeneration === 'rate') {
-        res.writeHead(429, { 'Retry-After': '2' });
-        return res.end(JSON.stringify({ error: { message: 'Too Many Requests', type: 'rate_limit_error' } }));
+      let mode = Array.isArray(failGeneration) ? (failGeneration.shift() || false) : failGeneration;
+      if (mode === 'hold') { await new Promise(resolve => { releaseGeneration = resolve; }); mode = false; }
+      if (mode === 'rate') {
+        res.writeHead(429, { 'Retry-After': '60' });
+        return res.end(JSON.stringify({ error: { message: 'Too Many Requests', type: 'rate_limit_error', retry_after: 60 } }));
       }
-      res.writeHead(failGeneration ? 500 : 200);
-      return res.end(JSON.stringify(failGeneration ? { error: { message: 'Fixture failure' } } : { choices: [{ message: { content: `data:image/png;base64,${fixture}` } }] }));
+      if (mode === 'pool') {
+        res.writeHead(429);
+        return res.end(JSON.stringify({ error: { message: '当前没有可用的 Token（可能全部已禁用、过期或正在冷却）', type: 'rate_limit_error' } }));
+      }
+      if (mode === 'auth' || mode === 'quota') {
+        res.writeHead(mode === 'auth' ? 401 : 429);
+        return res.end(JSON.stringify({ error: { message: mode === 'auth' ? 'Invalid key' : 'No credit', type: mode === 'auth' ? 'invalid_api_key' : 'insufficient_quota' } }));
+      }
+      res.writeHead(mode === true ? 500 : 200);
+      return res.end(JSON.stringify(mode === true ? { error: { message: 'Fixture failure' } } : mode === 'empty' ? { choices: [] } : { choices: [{ message: { content: `data:image/png;base64,${fixture}` } }] }));
     }
     res.writeHead(404); res.end('{}');
   });
@@ -104,26 +114,105 @@ fs.mkdirSync(artifactDir, { recursive: true });
     generations = requests.filter(r => r.method === 'POST');
     assert.equal(generations.length, 2, 'upstream failure must not trigger another paid request');
     await page.clock.install({ time: new Date() });
+    const count = () => requests.filter(r => r.method === 'POST').length;
+    const waitIdle = () => page.waitForFunction(() => document.getElementById('ng-generate').getAttribute('aria-busy') !== 'true');
+    const waitRetry = attempt => page.waitForFunction(n => document.getElementById('ng-gen-status').textContent.includes(`attempt ${n} failed; retrying`), attempt);
+    const checkButtons = async target => {
+      const layout = await target.evaluate(() => {
+        const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
+        return { constant: rect('ng-constant-generate'), manual: rect('ng-generate'), height: innerHeight, width: innerWidth, headerTop: document.querySelector('.ng-studio-header').getBoundingClientRect().top };
+      });
+      for (const r of [layout.constant, layout.manual]) {
+        assert.ok(r.width >= 120 && r.left >= 0 && r.right <= layout.width + 1 && r.bottom <= layout.height + 1, JSON.stringify(layout));
+      }
+      assert.ok(layout.constant.right <= layout.manual.left + 1 && layout.headerTop >= 0, JSON.stringify(layout));
+    };
     failGeneration = 'rate';
-    await root.locator('#ng-generate').click();
-    await page.waitForFunction(() => document.getElementById('ng-generate').getAttribute('aria-busy') !== 'true');
-    assert.equal(await root.locator('#ng-generate').isDisabled(), true);
-    assert.match(await root.locator('#ng-generate').innerText(), /Wait \d+s/);
-    assert.match(await root.locator('#ng-gen-status').innerText(), /Provider rate limit/);
-    assert.equal(requests.filter(r => r.method === 'POST').length, 3);
-    await root.locator('#ng-close').click();
-    await page.evaluate(() => document.getElementById('ng-v051-open-studio').click());
-    assert.equal(await root.locator('#ng-generate').isDisabled(), true, 'reopening Studio must preserve cooldown');
-    // ST discards upstream Retry-After, so the extension uses its 60s default.
-    await page.clock.fastForward(61000);
-    assert.equal(await root.locator('#ng-generate').isDisabled(), false);
-    assert.match(await root.locator('#ng-generate').innerText(), /Generate image/);
-    assert.equal(requests.filter(r => r.method === 'POST').length, 3, 'expiry must not automatically generate or bill');
+    await root.locator('#ng-generate').click(); await waitIdle();
+    assert.equal(await root.locator('#ng-generate').isDisabled(), false, 'no client cooldown, even with an explicit 60-second retry hint');
+    assert.match(await root.locator('#ng-gen-status').innerText(), /rate limit/);
+    assert.equal(count(), 3);
+    await root.locator('#ng-generate').click(); await waitIdle();
+    assert.equal(count(), 4, 'immediate manual retry must reach the provider');
     failGeneration = false;
-    await root.locator('#ng-generate').click();
-    await page.waitForFunction(() => !document.getElementById('ng-generate').disabled);
-    assert.equal(requests.filter(r => r.method === 'POST').length, 4);
-    assert.match(await root.locator('#ng-gen-status').innerText(), /Generated 1 image/);
+    await root.locator('#ng-generate').click(); await waitIdle();
+    assert.equal(count(), 5);
+
+    failGeneration = ['rate', 'auth', 'quota', true, 'empty', false];
+    // Isolate retry cycles from the generic adapter's validation-schema fallback.
+    await page.evaluate(() => {
+      const s = SillyTavern.getContext().extensionSettings.novelGeneration;
+      s.compatibility = 'strict'; s.routeMode = 'chat';
+    });
+    await root.locator('#ng-studio-n').evaluate(n => { n.value = '3'; n.dispatchEvent(new Event('input', { bubbles: true })); });
+    await root.locator('#ng-constant-generate').click();
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      await waitRetry(attempt);
+      assert.equal(await root.locator('#ng-generate').isDisabled(), false);
+      assert.equal(await root.locator('#ng-constant-generate').getAttribute('aria-pressed'), 'true');
+      await page.clock.fastForward(2000);
+    }
+    await page.waitForFunction(() => document.getElementById('ng-gen-status').textContent.includes('completed after 6 attempts'));
+    assert.equal(count(), 11, 'one-image attempts retry all five error categories, then stop at one success');
+    assert.equal(await root.locator('#ng-constant-generate').getAttribute('aria-pressed'), 'false');
+    await page.clock.fastForward(10000);
+    assert.equal(count(), 11, 'success cannot generate another image');
+
+    failGeneration = 'pool';
+    await root.locator('#ng-constant-generate').click(); await waitRetry(1);
+    assert.match(await root.locator('#ng-gen-status').innerText(), /upstream channel unavailable/);
+    await root.locator('.ng-v055-mobile-nav [data-tab="generate"]').click();
+    await checkButtons(page);
+    await page.screenshot({ path: path.join(artifactDir, 'constant-mobile.png') });
+    await root.locator('#ng-constant-generate').click();
+    const stoppedAt = count();
+    await page.clock.fastForward(10000);
+    assert.equal(count(), stoppedAt, 'Stop clears queued attempts');
+
+    await root.locator('#ng-constant-generate').click(); await waitRetry(1);
+    failGeneration = false;
+    await root.locator('#ng-generate').click(); await waitIdle();
+    assert.equal(await root.locator('#ng-constant-generate').getAttribute('aria-pressed'), 'false', 'manual Generate cancels the loop');
+    const manualAt = count();
+    await page.clock.fastForward(10000);
+    assert.equal(count(), manualAt);
+
+    failGeneration = 'hold'; releaseGeneration = null;
+    await root.locator('#ng-constant-generate').click();
+    while (!releaseGeneration) await new Promise(resolve => setTimeout(resolve, 20));
+    assert.equal(await root.locator('#ng-generate').isDisabled(), true);
+    await root.locator('#ng-constant-generate').click();
+    const inFlightAt = count();
+    releaseGeneration(); await waitIdle();
+    await page.clock.fastForward(10000);
+    assert.equal(count(), inFlightAt, 'stopping in-flight permits completion without a new request');
+
+    failGeneration = 'pool';
+    await root.locator('#ng-constant-generate').click(); await waitRetry(1);
+    await root.locator('#ng-close').click();
+    const closedAt = count();
+    await page.clock.fastForward(10000);
+    assert.equal(count(), closedAt, 'closing Studio stops retries');
+    await page.evaluate(() => document.getElementById('ng-v051-open-studio').click());
+    assert.equal(await root.locator('#ng-constant-generate').getAttribute('aria-pressed'), 'false');
+
+    const desktop = await browser.newPage({ viewport: { width: 1440, height: 1000 }, isMobile: false, hasTouch: false });
+    await desktop.goto(studioUrl, { waitUntil: 'domcontentloaded' });
+    await desktop.waitForSelector('#ng-v051-open-studio', { state: 'attached' }); await desktop.waitForTimeout(1200);
+    await desktop.evaluate(() => document.getElementById('ng-v051-open-studio').click());
+    const pc = desktop.locator('#ng-studio-overlay');
+    const pcConnection = pc.locator('[data-focus="connection"]');
+    if (!await pcConnection.evaluate(n => n.open)) await pcConnection.locator('summary').click();
+    await pc.locator('#ng-studio-base').fill(provider); await pc.locator('#ng-studio-api-key').fill('fixture-image-key');
+    await pc.locator('#ng-studio-connect').click(); await desktop.waitForFunction(() => !document.getElementById('ng-studio-connect').disabled);
+    await pcConnection.locator('summary').click();
+    await pc.locator('#ng-prompt').fill('portrait of an adult traveler, brown eyes, soft natural lighting');
+    await pc.locator('#ng-constant-generate').click();
+    await desktop.waitForFunction(() => document.getElementById('ng-gen-status').textContent.includes('retrying in 2s'));
+    assert.equal(await pc.locator('#ng-constant-generate').isDisabled(), false);
+    await checkButtons(desktop);
+    await desktop.screenshot({ path: path.join(artifactDir, 'constant-pc.png') });
+    await pc.locator('#ng-constant-generate').click(); await desktop.close();
     assert.equal(await page.evaluate(() => JSON.stringify(SillyTavern.getContext().chatCompletionSettings)), chatBefore);
     assert.deepEqual(errors, []);
     await root.locator('.ng-v055-mobile-nav [data-tab="generate"]').click();
@@ -133,7 +222,7 @@ fs.mkdirSync(artifactDir, { recursive: true });
     await root.locator('#ng-close').click();
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.apiKey), '');
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.proxyApiKey), '');
-    const report = { browser: engine.name(), genericProxy: 'disabled', browserCors: 'blocked', expectedCorsDiagnostics: corsErrors.length, backend: 'real SillyTavern status/generate', naiModels: 2, migration: 'passed', exactProviderPayload: 'passed', generationAttempts: 4, cooldownReopenAndExpiry: 'passed', automaticRetries: 0, browserErrors: errors };
+    const report = { browser: engine.name(), genericProxy: 'disabled', browserCors: 'blocked', backend: 'real SillyTavern status/generate', exactProviderPayload: 'passed', generationAttempts: count(), manualCooldown: 'removed', constantRetryAllErrors: 'passed', constantStopsOnSuccess: 'passed', stopQueuedAndInFlight: 'passed', manualOverride: 'passed', closeStopsRetries: 'passed', browserErrors: errors };
     fs.writeFileSync(path.join(artifactDir, 'hosted-report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {
