@@ -92,3 +92,15 @@ Validation:
 - A bounded live Constant generation check used the existing RVL Shop connection and `[X]-[AG]-nai-diffusion-5-full-[0.21]`. Model discovery returned 27 NAI models. Three generation attempts produced no image; the final error retained HTTP 429 and the original upstream message that no usable token was available (disabled, expired, or cooling down). The test was stopped after three attempts; the production mode itself has no attempt cap. This confirms retry/error transport behavior, not restoration of the provider's token pool.
 
 The ST bridge uses raw response forwarding, while custom include/exclude fields keep the actual provider image request non-streaming. Manual attempts remain single-attempt operations; automatic retries happen only when Constant generation is explicitly enabled.
+
+## 2026-10-17 — Constant generation without the two-second wait, 0.8.5
+
+The user chose immediate sequential retries. After a failed attempt completes, Constant generation now queues the next attempt with a zero-delay browser timer instead of waiting two seconds. It yields to the browser between attempts so Stop can run, and still waits for the current request to settle before sending another. Actual throughput depends on provider response time and browser scheduling. It stops at the first image or the existing Stop/close/connection-change conditions.
+
+Validation:
+
+- All 45 Node behavior tests pass. The retry tests advance the fake clock by zero milliseconds and check all error categories, one request at a time, stopping before a queued retry, stopping during an unresolved request, and no further attempts after success. A new deferred-response case confirms that a pending request cannot cause overlapping retries even after 60 seconds.
+- Chromium and WebKit pass the hosted integration suite against real SillyTavern 1.19.0 and a local provider fixture, with the generic CORS proxy disabled. Each engine exercises 17 generation requests, including five consecutive errors followed by success with only a one-millisecond browser-clock advance per retry. The fixture records a peak of one concurrent generation. Stop, manual override, Studio closure, PC/mobile button layout, and exact provider payload preservation pass with no browser errors.
+- The WebKit HTTP-cache test upgrades cached 0.8.0 assets to 0.8.5 while preserving cookies, local storage, saved settings and old cached assets. No cache clearing is required.
+
+This release changes retry timing. No paid RVL Shop image requests were made for this follow-up, and these fixture results do not establish current upstream availability or bypass provider limits.

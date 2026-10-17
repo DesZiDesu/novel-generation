@@ -526,7 +526,7 @@ test('legacy wrapped rate limits and quota errors remain distinguishable with im
   }
 });
 
-test('constant generation retries all failure categories sequentially and stops at first success', async () => {
+test('constant generation retries every failure on the next browser turn and stops at first success', async () => {
   const api = runtime();
   const failures = [429, 401, 403, 500, 'network', 'timeout', 'no image'];
   let calls = 0, active = 0, peak = 0;
@@ -539,10 +539,8 @@ test('constant generation retries all failure categories sequentially and stops 
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls, 1);
   for (let i = 0; i < failures.length; i++) {
-    api.advanceClock(1999);
-    await new Promise(resolve => setImmediate(resolve));
-    assert.equal(calls, i + 1, 'the opt-in loop spaces failed attempts by two seconds');
-    api.advanceClock(1);
+    assert.equal(calls, i + 1, 'retry yields to the browser instead of spinning synchronously');
+    api.advanceClock(0);
     await new Promise(resolve => setImmediate(resolve));
   }
   await done;
@@ -551,6 +549,24 @@ test('constant generation retries all failure categories sequentially and stops 
   assert.equal(api.constantActive(), false);
   api.advanceClock(60000);
   assert.equal(calls, 8, 'success never starts another image');
+});
+
+test('constant generation waits for the current response before an immediate retry', async () => {
+  const api = runtime(); let calls = 0, finish;
+  const done = api.ngStartConstantGeneration(async () => {
+    if (++calls === 1) return await new Promise(resolve => { finish = resolve; });
+    return { ok: true };
+  });
+  api.advanceClock(60000);
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1, 'an unresolved request cannot start a concurrent attempt');
+  finish({ ok: false, error: new Error('429') });
+  await new Promise(resolve => setImmediate(resolve));
+  assert.equal(calls, 1, 'even an immediate retry yields for Stop');
+  api.advanceClock(0);
+  await done;
+  assert.equal(calls, 2, 'the next browser turn retries with no elapsed cooldown');
+  assert.equal(api.constantActive(), false);
 });
 
 test('stopping constant generation clears a queued retry', async () => {
@@ -576,7 +592,7 @@ test('constant generation revisits a route after a transient 404', async () => {
   const done = api.ngStartConstantGeneration(async () => { await api.generateState(state()); return { ok: true }; });
   await new Promise(resolve => setImmediate(resolve));
   assert.equal(calls, 2);
-  api.advanceClock(2000);
+  api.advanceClock(0);
   await done;
   assert.equal(calls, 3);
   assert.equal(api.constantActive(), false);
@@ -599,7 +615,7 @@ test('constant generation stops before sending to a changed model or credential'
     const api = runtime(); let calls = 0;
     const done = api.ngStartConstantGeneration(async () => { calls++; return { ok: false }; });
     await new Promise(resolve => setImmediate(resolve));
-    change(api); api.advanceClock(2000);
+    change(api); api.advanceClock(0);
     await done;
     assert.equal(calls, 1);
     assert.equal(api.constantActive(), false);

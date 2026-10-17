@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.8.4';
+const VERSION = '0.8.5';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -72,7 +72,8 @@ let studioLaunchTimer = null;
 let studioLaunchSequence = 0;
 let ngGenerationBusy = false;
 let ngConstantGeneration = null;
-const NG_CONSTANT_RETRY_MS = 2000;
+// Yield to the browser so Stop stays responsive, without an intentional retry delay.
+const NG_CONSTANT_RETRY_MS = 0;
 const gallery = [];
 const debugLog = [];
 const unavailableAutoRoutes = new Set();
@@ -564,7 +565,7 @@ async function ngStartConstantGeneration(attempt) {
       }
       if (out) {
         const detail = outcome?.error?.message || 'No image returned.';
-        out.textContent = `Constant generation: attempt ${run.attempts} failed; retrying in 2s. ${detail.slice(0, 160)}`;
+        out.textContent = `Constant generation: attempt ${run.attempts} failed; retrying immediately. ${detail.slice(0, 160)}`;
         out.title = detail;
       }
       await new Promise(resolve => {
@@ -1155,7 +1156,7 @@ function studioHtml() {
       </aside>
       <section class="ng-studio-stage"><header class="ng-stage-header"><div><span class="ng-card-eyebrow">YOUR CANVAS</span><h2>Preview</h2></div><span id="ng-stage-size" class="ng-stage-size">${s.width} × ${s.height}</span></header><section id="ng-preview" class="ng-studio-preview"><div class="ng-preview-empty"><div class="ng-empty-frame"><i class="fa-regular fa-image"></i><span></span></div><strong>Image preview</strong><span>Generated images will appear here.</span><small>Portrait · Square · Landscape</small></div></section><footer class="ng-stage-meta"><span id="ng-last-seed"><i class="fa-solid fa-fingerprint"></i> Your generation details will appear here</span><button id="ng-reuse-seed" class="menu_button" type="button" hidden><i class="fa-solid fa-rotate-left"></i> Reuse seed</button></footer></section>
     </main>
-    <footer class="ng-studio-footer"><div id="ng-gen-status" class="ng-generation-status" role="status">Ready<span class="ng-shortcut">Ctrl / ⌘ + Enter to generate</span></div><div class="ng-footer-actions"><div class="ng-quick-seed"><div class="ng-quick-seed-number"><small>SEED</small><strong id="ng-quick-seed-value">${Number(s.seed) < 0 ? 'Every image' : s.seed}</strong></div><div class="ng-quick-seed-modes" role="group" aria-label="Seed mode for NAI 5" ${ngIsNai5Model() ? '' : 'hidden'}><button class="menu_button" type="button" data-ng-seed-mode="auto" aria-label="Auto seed for NAI 5" aria-pressed="${Number(s.seed) < 0}" title="Choose a fresh seed for each NAI 5 image"><i class="fa-solid fa-shuffle"></i><span>Auto</span></button><button class="menu_button" type="button" data-ng-seed-mode="fixed" aria-label="Fixed seed" aria-pressed="${Number(s.seed) >= 0}" title="Keep the current or last used seed"><i class="fa-solid fa-lock"></i><span>Fixed</span></button></div><button class="menu_button ng-quick-seed-roll" type="button" data-ng-seed-target="ng-studio-seed" aria-label="Roll a new seed and use Fixed mode" title="New seed · switch to Fixed"><i class="fa-solid fa-dice"></i><span>New seed</span></button><span id="ng-seed-mode-status" class="ng-sr-only" role="status" aria-live="polite"></span></div><div class="ng-generate-buttons"><button id="ng-constant-generate" class="menu_button" type="button" aria-pressed="false" title="Retry one image every 2 seconds after any error, until an image succeeds. Stop ends further attempts; a sent request may finish."><i class="fa-solid fa-repeat"></i><span>Constant generation</span></button><button id="ng-generate" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate image</span><i class="fa-solid fa-arrow-right"></i></button></div></div></footer>
+    <footer class="ng-studio-footer"><div id="ng-gen-status" class="ng-generation-status" role="status">Ready<span class="ng-shortcut">Ctrl / ⌘ + Enter to generate</span></div><div class="ng-footer-actions"><div class="ng-quick-seed"><div class="ng-quick-seed-number"><small>SEED</small><strong id="ng-quick-seed-value">${Number(s.seed) < 0 ? 'Every image' : s.seed}</strong></div><div class="ng-quick-seed-modes" role="group" aria-label="Seed mode for NAI 5" ${ngIsNai5Model() ? '' : 'hidden'}><button class="menu_button" type="button" data-ng-seed-mode="auto" aria-label="Auto seed for NAI 5" aria-pressed="${Number(s.seed) < 0}" title="Choose a fresh seed for each NAI 5 image"><i class="fa-solid fa-shuffle"></i><span>Auto</span></button><button class="menu_button" type="button" data-ng-seed-mode="fixed" aria-label="Fixed seed" aria-pressed="${Number(s.seed) >= 0}" title="Keep the current or last used seed"><i class="fa-solid fa-lock"></i><span>Fixed</span></button></div><button class="menu_button ng-quick-seed-roll" type="button" data-ng-seed-target="ng-studio-seed" aria-label="Roll a new seed and use Fixed mode" title="New seed · switch to Fixed"><i class="fa-solid fa-dice"></i><span>New seed</span></button><span id="ng-seed-mode-status" class="ng-sr-only" role="status" aria-live="polite"></span></div><div class="ng-generate-buttons"><button id="ng-constant-generate" class="menu_button" type="button" aria-pressed="false" title="Retry one image immediately after any error, one request at a time, until an image succeeds. Stop ends further attempts; a sent request may finish."><i class="fa-solid fa-repeat"></i><span>Constant generation</span></button><button id="ng-generate" class="menu_button" type="button"><i class="fa-solid fa-wand-magic-sparkles"></i><span>Generate image</span><i class="fa-solid fa-arrow-right"></i></button></div></div></footer>
   </div>`;
 }
 
