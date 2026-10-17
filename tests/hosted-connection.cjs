@@ -39,6 +39,14 @@ async function waitForState(page, predicate, arg) {
       res.once('finish', () => activeGenerations--);
       let mode = Array.isArray(failGeneration) ? (failGeneration.shift() || false) : failGeneration;
       if (mode === 'hold') { await new Promise(resolve => { releaseGeneration = resolve; }); mode = false; }
+      if (mode === 'html' || mode === 'ok-html') {
+        res.writeHead(mode === 'html' ? 502 : 200, { 'Content-Type': 'text/html' });
+        return res.end('<!DOCTYPE html><!--' + 'x'.repeat(6500) + '--><html><title>Fixture gateway | 502: Bad gateway</title><body>Cloudflare Ray ID: <strong>1234567890abcdef</strong></body></html>');
+      }
+      if (mode === 'invalid-token') {
+        res.writeHead(401);
+        return res.end(JSON.stringify({ error: { message: 'Invalid token (request id: fixture-auth-123)', type: 'new_api_error' } }));
+      }
       if (mode === 'rate') {
         res.writeHead(429, { 'Retry-After': '60' });
         return res.end(JSON.stringify({ error: { message: 'Too Many Requests', type: 'rate_limit_error', retry_after: 60 } }));
@@ -82,6 +90,7 @@ async function waitForState(page, predicate, arg) {
     await page.evaluate(() => {
       const s = SillyTavern.getContext().extensionSettings.novelGeneration;
       delete s.serverBridgeBaseUrl; delete s.corsProxyBaseUrl;
+      s.compatibility = 'auto'; s.routeMode = 'auto';
       document.getElementById('ng-v051-open-studio').click();
     });
     const root = page.locator('#ng-studio-overlay');
@@ -95,6 +104,9 @@ async function waitForState(page, predicate, arg) {
     assert.deepEqual(await root.locator('#ng-studio-model option').evaluateAll(nodes => nodes.map(n => n.value)), ['nai-diffusion-5-full', 'nai-diffusion-4-5-full']);
     assert.equal(requests.some(r => r.method === 'OPTIONS'), true, 'direct browser CORS must actually fail');
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.serverBridgeBaseUrl), provider);
+    const capabilities = JSON.parse(await page.locator('#ng-debug-output').textContent()).find(item => item.route === 'capability-probe');
+    assert.equal(capabilities.response.native_generate.state, 'transport-unavailable');
+    assert.equal(capabilities.response.native_generate.attempts.length, 0, 'native support was not tested through this bridge');
     // Migration also uses the same real server routes, with no cached bridge.
     await page.evaluate(provider => {
       const s = SillyTavern.getContext().extensionSettings.novelGeneration;
@@ -231,6 +243,23 @@ async function waitForState(page, predicate, arg) {
     await checkButtons(desktop);
     await desktop.screenshot({ path: path.join(artifactDir, 'constant-pc.png') });
     await pc.locator('#ng-constant-generate').click(); await desktop.close();
+
+    // Reproduce the user's HTML gateway and ST-mapped auth responses through
+    // the actual backend, after all retry/stop timing checks have completed.
+    for (const [mode, expected] of [['html', /HTML error page.*Bad gateway/], ['invalid-token', /does not identify whether your key or a channel's upstream token/], ['ok-html', /Unexpected HTML response/]]) {
+      failGeneration = mode;
+      const before = count();
+      await root.locator('#ng-generate').click(); await waitIdle();
+      assert.match(await root.locator('#ng-gen-status').innerText(), expected);
+      assert.equal(count(), before + 1, `${mode} must not cause silent schema retries`);
+      if (mode === 'html') {
+        const log = JSON.parse(await page.locator('#ng-debug-output').textContent()).find(item => item.failure);
+        assert.equal(log.response.cloudflare_ray, '1234567890abcdef');
+        assert.equal(log.failure.kind, 'gateway');
+        assert.doesNotMatch(JSON.stringify(log), /DOCTYPE/);
+      }
+    }
+    await page.screenshot({ path: path.join(artifactDir, 'diagnostics-mobile.png') });
     assert.equal(await page.evaluate(() => JSON.stringify(SillyTavern.getContext().chatCompletionSettings)), chatBefore);
     assert.deepEqual(errors, []);
     await root.locator('.ng-v055-mobile-nav [data-tab="generate"]').click();
@@ -241,7 +270,7 @@ async function waitForState(page, predicate, arg) {
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.apiKey), '');
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.proxyApiKey), '');
     assert.equal(peakGenerations, 1, 'immediate retries must never overlap provider requests');
-    const report = { browser: engine.name(), genericProxy: 'disabled', browserCors: 'blocked', backend: 'real SillyTavern status/generate', exactProviderPayload: 'passed', generationAttempts: count(), manualCooldown: 'removed', constantRetryDelayMs: 0, peakConcurrentGenerations: peakGenerations, constantRetryAllErrors: 'passed', constantStopsOnSuccess: 'passed', stopQueuedAndInFlight: 'passed', manualOverride: 'passed', closeStopsRetries: 'passed', browserErrors: errors };
+    const report = { browser: engine.name(), genericProxy: 'disabled', browserCors: 'blocked', backend: 'real SillyTavern status/generate', exactProviderPayload: 'passed', generationAttempts: count(), transportCapabilityReporting: 'passed', htmlGatewayAndInvalidTokenDiagnostics: 'passed', manualCooldown: 'removed', constantRetryDelayMs: 0, peakConcurrentGenerations: peakGenerations, constantRetryAllErrors: 'passed', constantStopsOnSuccess: 'passed', stopQueuedAndInFlight: 'passed', manualOverride: 'passed', closeStopsRetries: 'passed', browserErrors: errors };
     fs.writeFileSync(path.join(artifactDir, 'hosted-report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {

@@ -24,11 +24,19 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 
 ### Updating without clearing browser data
 
-The current manifest loads `index.js?v=0.8.5` and `style.css?v=0.8.5`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
+The current manifest loads `index.js?v=0.8.6` and `style.css?v=0.8.6`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
 
 The cache regression test is `CHROMIUM_PATH=/usr/bin/chromium node tests/cached-update.cjs`, or `BROWSER=webkit node tests/cached-update.cjs`, against an isolated SillyTavern installation. It warms the browser's real HTTP cache with a 0.8.0 fixture, publishes the current manifest, then verifies the current Studio loads while old cached assets and saved state remain available. The fixture serves manifests without caching so the test isolates stale JavaScript/CSS; a host that also serves a stale manifest must update/revalidate that metadata.
 
 ## Current scope
+
+### Provider diagnostics in 0.8.6
+
+- Connection success confirms model discovery; image generation is tested separately. A key can load models and work on one channel while another channel rejects its upstream token or returns gateway errors.
+- Request Debug distinguishes HTML gateway pages, provider JSON errors, authentication failures, and a native channel rejecting `parameters` even though the request includes them. HTML errors retain their title and Cloudflare Ray ID when supplied, rather than showing truncated page markup. Provider codes and request IDs remain available; the active API key is redacted.
+- `Invalid token` does not establish whether the user's key or a channel's upstream credential was rejected. An authentication error returned as HTTP 400 by SillyTavern stops payload-schema fallback; opt-in Constant generation still retries it as requested.
+- When SillyTavern's Custom API bridge is in use, native image/encoder capabilities say **Unavailable through this connection; provider support untested**. No native probe is sent or reported as a provider 404. Inpaint and Precise Reference support still require a working native route and real feature validation. Native route candidates no longer contain duplicate `/v1/v1/` segments.
+- Successful non-JSON responses pass through the bridge to the image parser. Payload formats, selected models, and immediate sequential Constant retries remain unchanged.
 
 ### OpenAI chat canvas fix in 0.8.3
 

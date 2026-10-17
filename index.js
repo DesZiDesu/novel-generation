@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.8.5';
+const VERSION = '0.8.6';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -506,12 +506,63 @@ const headers = () => ({ 'Content-Type': 'application/json', Accept: 'applicatio
 // Resolve CORS transport with the read-only model request. Generation requests
 // use that choice once; retrying a failed POST could generate and bill twice.
 function ngProviderFailure(data, status = 429) {
-  let detail = String(typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '').slice(0, 600);
-  if (apiKey) detail = detail.split(apiKey).join('[redacted]');
+  const detail = ngRedactProviderText(typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '').slice(0, 600);
   const unavailable = /no (?:available|usable) (?:upstream )?(?:tokens?|channels?)|当前没有可用的\s*token|无可用(?:的)?(?:渠道|令牌|账号)/i.test(detail);
   const reason = ngQuotaError(data) ? 'Provider quota exhausted. Check the account credit or quota.'
     : unavailable ? 'Provider upstream channel unavailable.' : 'Provider rate limit (429).';
   return Object.assign(new Error(`${reason}${detail ? ` ${detail}` : ''}`), { status, providerMessage: detail });
+}
+
+function ngRedactProviderText(value) {
+  const text = String(value ?? '');
+  return apiKey ? text.split(apiKey).join('[redacted]') : text;
+}
+
+function ngHtmlErrorSummary(raw) {
+  const plain = value => ngRedactProviderText(value).replace(/<script\b[^>]*>[\s\S]*?<\/script>/gi, '')
+    .replace(/<style\b[^>]*>[\s\S]*?<\/style>/gi, '').replace(/<[^>]*>/g, ' ').replace(/\s+/g, ' ').trim();
+  const title = plain(raw.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i)?.[1] || '').slice(0, 240);
+  const text = plain(raw);
+  return cleanObject({ format: 'html', title: title || 'HTML response instead of image API data',
+    cloudflare_ray: text.match(/Cloudflare Ray ID:\s*([a-f0-9]{10,32})/i)?.[1], excerpt: text.slice(0, 600) });
+}
+
+function ngProviderResponseError(response, data, raw, payload) {
+  const status = response.status;
+  const html = /^\s*</.test(raw) ? ngHtmlErrorSummary(raw) : null;
+  const detail = ngRedactProviderText(html ? html.title : typeof data?.error === 'string' ? data.error
+    : data?.error?.message || data?.message || response.statusText || 'Empty provider response.').slice(0, 1200);
+  const code = ngRedactProviderText(data?.error?.code || data?.error?.type || '');
+  const requestIds = [...detail.matchAll(/\brequest id:\s*([^\s)]+)/gi)].map(match => match[1]);
+  const parametersSent = Boolean(payload?.parameters && typeof payload.parameters === 'object' && Object.keys(payload.parameters).length);
+  let kind, message, error;
+  if (ngQuotaError(data) || status === 429) {
+    error = ngProviderFailure(data, status);
+    kind = ngQuotaError(data) ? 'quota' : /upstream channel unavailable/.test(error.message) ? 'upstream-unavailable' : 'rate-limit';
+  } else if (!html && ([401, 403].includes(status) || /invalid[\s_-]*(?:(?:api)[\s_-]*)?(?:key|token)|invalid_api_key|authentication_error/i.test(`${detail} ${code}`))) {
+    kind = 'authentication';
+    message = `Provider authentication error (HTTP ${status}). The response does not identify whether your key or a channel's upstream token was rejected. ${detail}`;
+  } else if (/parameters\s+(?:is\s+)?required/i.test(detail) && parametersSent) {
+    kind = 'upstream-payload';
+    message = `Provider rejected parameters (HTTP ${status}), although this request includes parameters. Check the required format with the channel provider. ${detail}`;
+  } else if (status >= 500) {
+    kind = 'gateway';
+    message = `Provider/server error (HTTP ${status}). The gateway or selected upstream channel failed${html ? ' and returned an HTML error page' : ''}. ${detail}`;
+  } else if (html) {
+    kind = 'unexpected-response';
+    message = `Unexpected HTML response (HTTP ${status}) instead of image API data. ${detail}`;
+  } else {
+    kind = 'request';
+    message = `Provider request failed (HTTP ${status}). ${detail}`;
+  }
+  error ??= new Error(message);
+  return Object.assign(error, { status, kind, providerMessage: detail, providerCode: code, requestIds, parametersSent,
+    html, authentication: kind === 'authentication' });
+}
+
+function ngProviderErrorDebug(error) {
+  return cleanObject({ kind: error.kind, message: error.message, provider_code: error.providerCode || undefined,
+    request_ids: error.requestIds?.length ? error.requestIds : undefined, parameters_sent: error.parametersSent });
 }
 
 function ngSyncGenerationAvailability() {
@@ -605,7 +656,7 @@ async function ngServerBridgeFetch(url, options = {}) {
   const isModels = url === modelsUrl && method === 'GET';
   const isChat = url === chatUrl && method === 'POST';
   if (!isModels && !isChat) {
-    return Response.json({ error: { message: 'This route is unavailable through SillyTavern Custom API. This connection supports model discovery and chat image generation; native image, Inpaint and reference routes require provider CORS access or a server proxy.' } }, { status: 404 });
+    return Response.json({ error: { code: 'st_bridge_route_unavailable', message: 'This route is unavailable through SillyTavern Custom API. Provider support has not been tested. This connection supports model discovery and chat image generation; native image, Inpaint and reference routes require provider CORS access or a server proxy.' } }, { status: 404 });
   }
   const upstreamBase = modelsUrl.slice(0, -'/models'.length);
   const authorization = new Headers(options.headers).get('Authorization');
@@ -630,7 +681,9 @@ async function ngServerBridgeFetch(url, options = {}) {
     method: 'POST', headers: ctx().getRequestHeaders(), body: JSON.stringify(body), signal: options.signal,
   });
   if (!response.ok) return response;
-  const data = await response.clone().json();
+  let data;
+  try { data = await response.clone().json(); }
+  catch { return response; } // Preserve binary images and HTML for the generation response parser.
   // ST can wrap upstream errors in HTTP 200. Never interpret them as successful
   // images, or retry a paid generation after the backend has already sent it.
   if (data?.error) {
@@ -2121,9 +2174,11 @@ function debugAttempt(entry) {
 }
 
 function safePayloadForDebug(payload) {
-  const replacer = (_key, value) => typeof value === 'string' && value.length > 500
-    ? `${value.slice(0, 80)}…[${value.length} chars]`
-    : value;
+  const replacer = (_key, value) => {
+    if (typeof value !== 'string') return value;
+    const text = ngRedactProviderText(value);
+    return text.length > 500 ? `${text.slice(0, 80)}…[${text.length} chars]` : text;
+  };
   return JSON.parse(JSON.stringify(payload, replacer));
 }
 
@@ -2517,6 +2572,7 @@ function ngCapabilityLabel(value) {
   if (value === 'supported') return 'Supported';
   if (value === 'blocked') return 'Route found, access blocked';
   if (value === 'missing') return 'Not exposed';
+  if (value === 'transport-unavailable') return 'Unavailable through this connection; provider support untested';
   if (value === 'testing') return 'Testing…';
   return 'Unknown';
 }
@@ -2568,6 +2624,10 @@ function ngProviderPathCandidates(path) {
 }
 
 async function ngProbeAdvancedEndpoint(path) {
+  if (settings().serverBridgeBaseUrl === base()) {
+    return { state: 'transport-unavailable', url: '', status: 0, attempts: [],
+      reason: 'SillyTavern Custom API cannot forward native image or encoder routes. No upstream capability probe was sent; provider support is untested.' };
+  }
   let sawNetworkFailure = false;
   const attempts = [];
   for (const url of ngProviderPathCandidates(path)) {
@@ -2705,11 +2765,11 @@ async function connectAndLoadModels() {
     await ngProbeAdvancedCapabilities();
     const advanced = ngProviderCaps.nativeGenerate === 'supported' || ngProviderCaps.encodeVibe === 'supported';
     status(settings().serverBridgeBaseUrl === base()
-      ? `Connected via SillyTavern. ${models.length} NAI models available. Chat image generation needs no server configuration; native routes are unavailable on this connection.`
+      ? `Connected via SillyTavern. ${models.length} NAI models loaded; generation untested. Native routes cannot be tested through this connection.`
       : advanced
       ? `Connected. ${models.length} model${models.length === 1 ? '' : 's'} available. Advanced NovelAI route(s) detected.`
       : `Connected. ${models.length} model${models.length === 1 ? '' : 's'} available. Advanced native routes were not confirmed.`, 'ok');
-    toast('success', advanced ? 'Connected. Advanced NovelAI capability detected.' : 'Connected. Basic image generation is available.');
+    toast('success', advanced ? 'Connected. Advanced NovelAI routes detected; generation untested.' : 'Connected. NAI models loaded; generation untested.');
   } catch (error) {
     ngProviderCaps.wrapper = 'unknown';
     status(`Connection failed: ${error.message}`, 'error');
@@ -3028,7 +3088,17 @@ async function postGeneration(route, candidate, state, signal) {
     signal,
   });
   if (response.ok && ngUsesShopNativeChat()) {
-    const parsed = await ngNativeResponseImages(response);
+    let parsed;
+    try { parsed = await ngNativeResponseImages(response.clone()); }
+    catch (parseError) {
+      const raw = await response.text();
+      if (!/^\s*</.test(raw)) throw parseError;
+      const error = ngProviderResponseError(response, null, raw, body);
+      debugAttempt({ route, schema: candidate.name, status: response.status, ms: Math.round(performance.now() - started),
+        payload: safePayloadForDebug(body), response: error.html, failure: safePayloadForDebug(ngProviderErrorDebug(error)),
+        reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable' });
+      throw error;
+    }
     debugAttempt({ route, schema: candidate.name, status: response.status, ms: Math.round(performance.now() - started), payload: safePayloadForDebug(body), response: parsed.debug, reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable' });
     if (!parsed.images.length) throw Object.assign(new Error('Native chat wrapper returned success without an image.'), { status: 200 });
     return { images: parsed.images, data: parsed.debug, schema: candidate.name, route, referenceVerified: false, requestSeed: body.parameters.seed };
@@ -3037,20 +3107,18 @@ async function postGeneration(route, candidate, state, signal) {
   let data = null;
   try { data = raw ? JSON.parse(raw) : {}; } catch { data = { raw }; }
   const elapsed = Math.round(performance.now() - started);
+  const error = !response.ok || /^\s*</.test(raw) ? ngProviderResponseError(response, data, raw, body) : null;
   debugAttempt({
     route,
     schema: candidate.name,
     status: response.status,
     ms: elapsed,
     payload: safePayloadForDebug(body),
-    response: safePayloadForDebug(data),
+    response: safePayloadForDebug(error?.html || data),
+    failure: error ? safePayloadForDebug(ngProviderErrorDebug(error)) : undefined,
     reference_consumption: hasAdvancedReferences(state) ? 'unverified-wrapper' : 'not-applicable',
   });
-  if (!response.ok) {
-    if (ngQuotaError(data)) throw Object.assign(new Error('Provider quota exhausted. Check the account credit or quota before trying again.'), { status: 429 });
-    if (response.status === 429) throw ngProviderFailure(data, response.status);
-    throw Object.assign(new Error(`HTTP ${response.status}: ${raw.slice(0, 700) || response.statusText}`), { status: response.status });
-  }
+  if (error) throw error;
   const images = extractImages(data);
   if (!images.length) throw Object.assign(new Error('Provider returned success but no image URL/base64 was found in the response.'), { status: 200 });
   return { images, data, schema: candidate.name, route, referenceVerified: false, requestSeed: Number(state.seed) };
@@ -3180,7 +3248,7 @@ async function generateState(state, label = 'Generating…') {
         } catch (error) {
           failures.push(`${route}/${candidate.name}: ${error.message}`);
           if (error.name === 'AbortError' || error.name === 'TypeError') throw error;
-          if (error.status === 401 || error.status === 403) throw error;
+          if (error.authentication || error.kind === 'quota' || error.status === 401 || error.status === 403) throw error;
           // A missing endpoint is independent of payload schema. In Auto mode,
           // do not submit the same generation two more times to the same 404
           // route; remember it for this page session and proceed to chat.
@@ -5381,8 +5449,9 @@ function ngConsolidatedCandidates(paths) {
   const root = trimmed.replace(/\/v1$/i, '');
   const urls = [];
   for (const path of paths) {
-    urls.push(root + path, trimmed + path);
-    if (!/\/v1$/i.test(trimmed)) urls.push(trimmed + '/v1' + path);
+    urls.push(root + path);
+    if (!/\/v1$/i.test(trimmed) || !/^\/v1(?:\/|$)/i.test(path)) urls.push(trimmed + path);
+    if (!/\/v1$/i.test(trimmed) && !/^\/v1(?:\/|$)/i.test(path)) urls.push(trimmed + '/v1' + path);
   }
   return [...new Set(urls)];
 }
