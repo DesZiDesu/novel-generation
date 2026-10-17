@@ -104,3 +104,25 @@ Validation:
 - The WebKit HTTP-cache test upgrades cached 0.8.0 assets to 0.8.5 while preserving cookies, local storage, saved settings and old cached assets. No cache clearing is required.
 
 This release changes retry timing. No paid RVL Shop image requests were made for this follow-up, and these fixture results do not establish current upstream availability or bypass provider limits.
+
+## 2026-10-17 — Live channel failures and provider diagnostics, 0.8.6
+
+The user's log combined X/MI gateway or authentication failures, a DM native-channel `parameters is required` error, and native capability 404s generated locally by the ST bridge. The supplied RVL Shop key still returned 27 NAI models. Bounded manual tests used Full models only, with one image per request and no Constant loop or Curated generation.
+
+| Selected channel | Novel Gen in real SillyTavern | Direct RVL request using the same payload |
+| --- | --- | --- |
+| `[X]-[AG]-nai-diffusion-5-full-[0.21]` | HTTP 502, `openai_error`, `bad_response_status_code` | Same HTTP 502/error type |
+| `[MI]-[AG]-nai-diffusion-5-full-[0.2]` | HTTP 502, `openai_error`, `bad_response_status_code` | Same HTTP 502/error type |
+| `[DM]-[AG]-nai-diffusion-5-full-[0.46]` | HTTP 500, `parameters is required` | Same error, despite the request containing the full top-level native parameters object |
+| `[DM]-[AG]-[OAI]-nai-diffusion-5-full-[0.2]` | One real 832 × 1216 PNG | Not repeated; the successful Studio call already establishes working image access with this key |
+
+A single DM variant putting the native envelope as JSON in the user message, while retaining its top-level parameters, also returned the same error. That experiment was not adopted. The matching direct failures exclude ST forwarding as the sole cause; they do not establish the payload contract that the DM channel actually expects. That contract or upstream conversion still needs confirmation from RVL. The OAI image reports seed 0 and 23 steps instead of the requested 123456 and 28; the existing mismatch warning remains visible. A valid key and successful model discovery do not guarantee access or availability for every upstream channel. The older MI `Invalid token` response alone cannot identify whether the user's key or the channel's own upstream credential was rejected.
+
+The extension now summarizes HTML gateway responses with their title and Cloudflare Ray ID when supplied, retains JSON provider codes/request IDs, redacts the active key, identifies ambiguous authentication failures, and records whether native parameters were present in a rejected request. Authentication errors mapped to HTTP 400 by ST stop schema fallback. Native capabilities on the Custom API bridge are reported as transport-unavailable/provider-untested without fake upstream 404 probes. Duplicate `/v1/v1/` native candidates were removed. Successful non-JSON responses are preserved for the image parser. Immediate sequential Constant retries remain unchanged.
+
+Validation:
+
+- All 53 Node behavior tests pass, including HTML errors larger than the old debug truncation limit, gateway codes/request IDs, ST-mapped authentication, DM parameters preservation, binary response forwarding, and HTTP 200 HTML responses on both ordinary/native chat paths.
+- Chromium and WebKit pass against actual SillyTavern 1.19.0 with generic CORS proxy disabled. Each engine exercises 20 local fixture generation requests, including new HTML 502, HTTP 200 HTML, and `Invalid token` cases, with peak concurrency one and no browser errors.
+- The WebKit cache regression upgrades cached 0.8.0 assets to 0.8.6 without clearing cache, cookies, local storage or saved settings.
+- A final live check on 0.8.6 retains the X 502 and DM 500 with the new readable diagnostics and original request IDs. Across this investigation, 10 live generation requests produced one image. Discovery/capability checks are separate; local fixture images are not counted as live output. The provider failures themselves remain unresolved.

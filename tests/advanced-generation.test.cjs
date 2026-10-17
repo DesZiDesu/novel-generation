@@ -104,6 +104,27 @@ test('capabilities are scoped to the current URL and credential', async () => {
   assert.equal(api.ngCapabilitiesCurrent(), false);
 });
 
+test('ST bridge capabilities describe a transport limit without claiming upstream routes are missing', async () => {
+  let calls = 0;
+  const api = runtime(async () => { calls++; throw new Error('no native request should be sent'); });
+  api.settings().serverBridgeBaseUrl = 'https://new.xfxai.top/v1';
+  await api.ngProbeAdvancedCapabilities();
+  assert.equal(calls, 0);
+  assert.equal(api.caps.nativeGenerate, 'transport-unavailable');
+  assert.equal(api.caps.encodeVibe, 'transport-unavailable');
+  assert.match(api.ngAdvancedCapabilityLabel(api.caps.nativeGenerate, false), /provider support untested/);
+  assert.equal(api.logs[0].response.native_generate.attempts.length, 0);
+  assert.match(api.logs[0].response.native_generate.reason, /No upstream capability probe/);
+});
+
+test('native probes never construct duplicate v1 path segments', async () => {
+  const urls = [];
+  const api = runtime(async url => { urls.push(url); return Response.json({}, { status: 404 }); });
+  await api.ngProbeAdvancedCapabilities();
+  assert.ok(urls.length > 1);
+  assert.ok(urls.every(url => !url.includes('/v1/v1/')));
+});
+
 test('V5 Precise Reference is rejected before a provider request', async () => {
   let calls = 0;
   const api = runtime(async () => { calls++; throw new Error('unexpected request'); });
@@ -523,6 +544,90 @@ test('legacy wrapped rate limits and quota errors remain distinguishable with im
     api.settings().serverBridgeBaseUrl = 'https://new.xfxai.top/v1';
     for (let i = 0; i < 2; i++) await assert.rejects(api.generateState(state()), quota ? /quota exhausted/ : /rate limit/);
     assert.equal(calls, 2);
+  }
+});
+
+test('HTML gateway errors retain the useful title and Cloudflare ray without dumping markup', async () => {
+  const html = '<!DOCTYPE html><!--' + 'x'.repeat(6500) + '--><html><head><title>shop.example | 502: Bad gateway</title></head>'
+    + '<body><h1>Bad gateway</h1><p>Cloudflare Ray ID: <strong>1234567890abcdef</strong></p>'
+    + '<script>secret: test-key</script><p>test-key</p></body></html>';
+  const api = runtime(async () => new Response(html, { status: 502, headers: { 'content-type': 'text/html' } }));
+  await assert.rejects(api.postGeneration('chat', { name: 'test', payload: {} }, state(), new AbortController().signal), error => {
+    assert.equal(error.status, 502);
+    assert.equal(error.kind, 'gateway');
+    assert.match(error.message, /HTML error page.*502: Bad gateway/);
+    assert.doesNotMatch(error.message, /DOCTYPE|<script|test-key/);
+    return true;
+  });
+  assert.equal(api.logs[0].response.title, 'shop.example | 502: Bad gateway');
+  assert.equal(api.logs[0].response.cloudflare_ray, '1234567890abcdef');
+  assert.doesNotMatch(JSON.stringify(api.logs), /test-key|<script|DOCTYPE/);
+});
+
+test('upstream JSON gateway errors preserve their code and request ID', async () => {
+  const api = runtime(async () => Response.json({ error: { message: 'openai_error (request id: gateway-123)', type: 'bad_response_status_code' } }, { status: 502 }));
+  await assert.rejects(api.generateState(state()), error => error.kind === 'gateway' && error.providerCode === 'bad_response_status_code' && error.requestIds[0] === 'gateway-123');
+  const log = api.logs.find(item => item.failure);
+  assert.equal(log.failure.kind, 'gateway');
+  assert.deepEqual(Array.from(log.failure.request_ids), ['gateway-123']);
+});
+
+test('ST-mapped Invalid token errors identify authentication ambiguity and stop schema fallback', async () => {
+  let calls = 0;
+  const api = runtime(async () => { calls++; return Response.json({ error: { message: 'Invalid token (request id: auth-123)', type: 'new_api_error' } }, { status: 400 }); });
+  api.settings().proxyBaseUrl = 'https://other.example/v1';
+  api.settings().serverBridgeBaseUrl = 'https://other.example/v1';
+  api.settings().routeMode = 'chat';
+  await assert.rejects(api.generateState(state()), error => {
+    assert.equal(error.status, 400);
+    assert.equal(error.kind, 'authentication');
+    assert.match(error.message, /does not identify whether your key or a channel's upstream token/);
+    return true;
+  });
+  assert.equal(calls, 1, 'an authentication failure cannot be repaired by another payload schema');
+});
+
+test('DM parameters-required errors show that native parameters were already sent through ST', async () => {
+  let sent;
+  const api = runtime(async (_url, options) => {
+    sent = JSON.parse(JSON.parse(options.body).custom_include_body);
+    return Response.json({ error: { message: 'parameters is required (request id: inner-123) (request id: outer-456)', code: 'invalid_request' } }, { status: 500 });
+  });
+  api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+  api.settings().serverBridgeBaseUrl = 'https://shop.rvlconnect.com/v1';
+  api.settings().model = '[DM]-[AG]-nai-diffusion-5-full-[0.46]';
+  await assert.rejects(api.generateState(state({ seed: 123456 })), error => {
+    assert.equal(error.kind, 'upstream-payload');
+    assert.equal(error.parametersSent, true);
+    assert.match(error.message, /this request includes parameters/);
+    assert.deepEqual(Array.from(error.requestIds), ['inner-123', 'outer-456']);
+    return true;
+  });
+  assert.equal(sent.parameters.seed, 123456);
+  assert.equal(sent.parameters.width, 832);
+  assert.equal(sent.parameters.height, 1216);
+  assert.equal(api.logs.find(item => item.failure)?.failure.parameters_sent, true);
+});
+
+test('ST bridge preserves successful binary responses instead of requiring JSON', async () => {
+  const bytes = new Uint8Array([137, 80, 78, 71, 13, 10, 26, 10, 0, 0, 0, 0]);
+  const api = runtime(async () => new Response(bytes, { headers: { 'content-type': 'image/png' } }));
+  api.settings().serverBridgeBaseUrl = 'https://new.xfxai.top/v1';
+  const response = await api.ngProviderFetch('https://new.xfxai.top/v1/chat/completions', {
+    method: 'POST', body: JSON.stringify({ model: 'nai-diffusion-5-full', messages: [] }),
+  });
+  assert.equal(response.status, 200);
+  assert.deepEqual(new Uint8Array(await response.arrayBuffer()), bytes);
+});
+
+test('HTTP 200 HTML is diagnosed clearly for both ordinary and native chat responses', async () => {
+  for (const model of ['nai-diffusion-5-full', '[DM]-[AG]-nai-diffusion-5-full-[0.46]']) {
+    const api = runtime(async () => new Response('<!DOCTYPE html><html><title>Service temporarily unavailable</title></html>'));
+    api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+    api.settings().serverBridgeBaseUrl = 'https://shop.rvlconnect.com/v1';
+    api.settings().model = model;
+    await assert.rejects(api.postGeneration('chat', { name: 'test', payload: { model } }, state(), new AbortController().signal), error => error.kind === 'unexpected-response' && /Unexpected HTML response/.test(error.message));
+    assert.equal(api.logs[0].response.title, 'Service temporarily unavailable');
   }
 });
 
