@@ -13,9 +13,20 @@ const provider = `http://127.0.0.1:${port}/v1`;
 const artifactDir = process.env.ARTIFACT_DIR || path.join(os.tmpdir(), 'novel-generation-hosted');
 fs.mkdirSync(artifactDir, { recursive: true });
 
+// Poll from Node so assertions can observe the gap before a zero-delay retry
+// while the browser clock is paused. Provider requests still use the real ST.
+async function waitForState(page, predicate, arg) {
+  const deadline = Date.now() + 30000;
+  while (Date.now() < deadline) {
+    if (await page.evaluate(predicate, arg)) return;
+    await new Promise(resolve => setTimeout(resolve, 20));
+  }
+  throw new Error(`Timed out waiting for browser state: ${predicate}`);
+}
+
 (async () => {
   const requests = [];
-  let fixture, failGeneration = false, releaseGeneration;
+  let fixture, failGeneration = false, releaseGeneration, activeGenerations = 0, peakGenerations = 0;
   const upstream = http.createServer(async (req, res) => {
     let raw = '';
     for await (const chunk of req) raw += chunk;
@@ -24,6 +35,8 @@ fs.mkdirSync(artifactDir, { recursive: true });
     if (req.method === 'OPTIONS') { res.writeHead(204); return res.end(); }
     if (req.method === 'GET' && req.url === '/v1/models') return res.end(JSON.stringify({ data: ['gpt-4o', 'nai-diffusion-5-full', 'nai-diffusion-4-5-full'].map(id => ({ id })) }));
     if (req.method === 'POST' && req.url === '/v1/chat/completions') {
+      peakGenerations = Math.max(peakGenerations, ++activeGenerations);
+      res.once('finish', () => activeGenerations--);
       let mode = Array.isArray(failGeneration) ? (failGeneration.shift() || false) : failGeneration;
       if (mode === 'hold') { await new Promise(resolve => { releaseGeneration = resolve; }); mode = false; }
       if (mode === 'rate') {
@@ -113,10 +126,9 @@ fs.mkdirSync(artifactDir, { recursive: true });
     await page.waitForFunction(() => !document.getElementById('ng-generate').disabled);
     generations = requests.filter(r => r.method === 'POST');
     assert.equal(generations.length, 2, 'upstream failure must not trigger another paid request');
-    await page.clock.install({ time: new Date() });
     const count = () => requests.filter(r => r.method === 'POST').length;
-    const waitIdle = () => page.waitForFunction(() => document.getElementById('ng-generate').getAttribute('aria-busy') !== 'true');
-    const waitRetry = attempt => page.waitForFunction(n => document.getElementById('ng-gen-status').textContent.includes(`attempt ${n} failed; retrying`), attempt);
+    const waitIdle = () => waitForState(page, () => document.getElementById('ng-generate').getAttribute('aria-busy') !== 'true');
+    const waitRetry = attempt => waitForState(page, n => document.getElementById('ng-gen-status').textContent.includes(`attempt ${n} failed; retrying immediately`), attempt);
     const checkButtons = async target => {
       const layout = await target.evaluate(() => {
         const rect = id => { const r = document.getElementById(id).getBoundingClientRect(); return { left: r.left, right: r.right, top: r.top, bottom: r.bottom, width: r.width }; };
@@ -138,6 +150,9 @@ fs.mkdirSync(artifactDir, { recursive: true });
     await root.locator('#ng-generate').click(); await waitIdle();
     assert.equal(count(), 5);
 
+    const clockTime = new Date();
+    await page.clock.install({ time: clockTime });
+    await page.clock.pauseAt(new Date(clockTime.getTime() + 1000));
     failGeneration = ['rate', 'auth', 'quota', true, 'empty', false];
     // Isolate retry cycles from the generic adapter's validation-schema fallback.
     await page.evaluate(() => {
@@ -150,9 +165,9 @@ fs.mkdirSync(artifactDir, { recursive: true });
       await waitRetry(attempt);
       assert.equal(await root.locator('#ng-generate').isDisabled(), false);
       assert.equal(await root.locator('#ng-constant-generate').getAttribute('aria-pressed'), 'true');
-      await page.clock.fastForward(2000);
+      await page.clock.fastForward(1);
     }
-    await page.waitForFunction(() => document.getElementById('ng-gen-status').textContent.includes('completed after 6 attempts'));
+    await waitForState(page, () => document.getElementById('ng-gen-status').textContent.includes('completed after 6 attempts'));
     assert.equal(count(), 11, 'one-image attempts retry all five error categories, then stop at one success');
     assert.equal(await root.locator('#ng-constant-generate').getAttribute('aria-pressed'), 'false');
     await page.clock.fastForward(10000);
@@ -207,8 +222,11 @@ fs.mkdirSync(artifactDir, { recursive: true });
     await pc.locator('#ng-studio-connect').click(); await desktop.waitForFunction(() => !document.getElementById('ng-studio-connect').disabled);
     await pcConnection.locator('summary').click();
     await pc.locator('#ng-prompt').fill('portrait of an adult traveler, brown eyes, soft natural lighting');
+    const desktopTime = new Date();
+    await desktop.clock.install({ time: desktopTime });
+    await desktop.clock.pauseAt(new Date(desktopTime.getTime() + 1000));
     await pc.locator('#ng-constant-generate').click();
-    await desktop.waitForFunction(() => document.getElementById('ng-gen-status').textContent.includes('retrying in 2s'));
+    await waitForState(desktop, () => document.getElementById('ng-gen-status').textContent.includes('retrying immediately'));
     assert.equal(await pc.locator('#ng-constant-generate').isDisabled(), false);
     await checkButtons(desktop);
     await desktop.screenshot({ path: path.join(artifactDir, 'constant-pc.png') });
@@ -222,11 +240,14 @@ fs.mkdirSync(artifactDir, { recursive: true });
     await root.locator('#ng-close').click();
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.apiKey), '');
     assert.equal(await page.evaluate(() => SillyTavern.getContext().extensionSettings.novelGeneration.proxyApiKey), '');
-    const report = { browser: engine.name(), genericProxy: 'disabled', browserCors: 'blocked', backend: 'real SillyTavern status/generate', exactProviderPayload: 'passed', generationAttempts: count(), manualCooldown: 'removed', constantRetryAllErrors: 'passed', constantStopsOnSuccess: 'passed', stopQueuedAndInFlight: 'passed', manualOverride: 'passed', closeStopsRetries: 'passed', browserErrors: errors };
+    assert.equal(peakGenerations, 1, 'immediate retries must never overlap provider requests');
+    const report = { browser: engine.name(), genericProxy: 'disabled', browserCors: 'blocked', backend: 'real SillyTavern status/generate', exactProviderPayload: 'passed', generationAttempts: count(), manualCooldown: 'removed', constantRetryDelayMs: 0, peakConcurrentGenerations: peakGenerations, constantRetryAllErrors: 'passed', constantStopsOnSuccess: 'passed', stopQueuedAndInFlight: 'passed', manualOverride: 'passed', closeStopsRetries: 'passed', browserErrors: errors };
     fs.writeFileSync(path.join(artifactDir, 'hosted-report.json'), JSON.stringify(report, null, 2));
     console.log(JSON.stringify(report, null, 2));
   } finally {
     if (browser) await browser.close();
+    releaseGeneration?.();
+    upstream.closeAllConnections();
     await new Promise(resolve => upstream.close(resolve));
   }
 })().catch(error => { console.error(error); process.exitCode = 1; });
