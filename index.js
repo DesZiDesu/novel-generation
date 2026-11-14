@@ -121,7 +121,38 @@ function ngIsRvlShop() {
 }
 
 function ngUsesShopNativeChat(model = settings().model) {
-  return ngIsRvlShop() && /^\[DM\]/i.test(model) && !/\[OAI\]/i.test(model) && ngIsNaiImageModel(model);
+  return ngIsRvlShop() && /^\[DM\]/i.test(model) && !/\[(?:OAI|OpenAI)\]/i.test(model) && ngIsNaiImageModel(model);
+}
+
+// RVL renamed the DM OpenAI wrapper tag from [OAI] to [OpenAI]. Both spellings
+// use the chat wrapper with top-level canvas fields, never the native envelope.
+function ngIsShopDmOpenAi(model = settings().model) {
+  return ngIsRvlShop() && /^\[DM\]/i.test(String(model || '')) && /\[(?:OAI|OpenAI)\]/i.test(String(model || ''))
+    && ngIsNaiImageModel(model);
+}
+
+// RVL [DZ] channels accept only `size: "WIDTHxHEIGHT"` (colon sizes are
+// rejected with "size must be auto or WIDTHxHEIGHT"; bare width/height are
+// ignored). Their upstream account has no Anlas, so canvases above the free
+// 1024 × 1024 pixel budget fail with HTTP 402 after reaching NovelAI.
+function ngIsShopDz(model = settings().model) {
+  return ngIsRvlShop() && /^\[DZ\]/i.test(String(model || '').trim()) && ngIsNaiImageModel(model);
+}
+
+function ngIsShopMd(model = settings().model) {
+  return ngIsRvlShop() && /^\[MD\]/i.test(String(model || '').trim()) && ngIsNaiImageModel(model);
+}
+
+const NG_NAI_FREE_PIXELS = 1024 * 1024;
+
+function ngSnap64(value) {
+  return Math.max(64, Math.round(Number(value) / 64) * 64);
+}
+
+function ngDzCanvas(width, height) {
+  const w = ngSnap64(width);
+  const h = ngSnap64(height);
+  return { width: w, height: h, size: `${w}x${h}`, overFreeLimit: w * h > NG_NAI_FREE_PIXELS };
 }
 
 function ngUnavailableRouteKey(route) {
@@ -508,7 +539,7 @@ const headers = () => ({ 'Content-Type': 'application/json', Accept: 'applicatio
 function ngProviderFailure(data, status = 429) {
   const detail = ngRedactProviderText(typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '').slice(0, 600);
   const unavailable = /no (?:available|usable) (?:upstream )?(?:tokens?|channels?)|当前没有可用的\s*token|无可用(?:的)?(?:渠道|令牌|账号)/i.test(detail);
-  const reason = ngQuotaError(data) ? 'Provider quota exhausted. Check the account credit or quota.'
+  const reason = ngQuotaError(data) ? 'Provider wallet or quota exhausted. Top up the account balance, then retry.'
     : unavailable ? 'Provider upstream channel unavailable.' : 'Provider rate limit (429).';
   return Object.assign(new Error(`${reason}${detail ? ` ${detail}` : ''}`), { status, providerMessage: detail });
 }
@@ -536,7 +567,15 @@ function ngProviderResponseError(response, data, raw, payload) {
   const requestIds = [...detail.matchAll(/\brequest id:\s*([^\s)]+)/gi)].map(match => match[1]);
   const parametersSent = Boolean(payload?.parameters && typeof payload.parameters === 'object' && Object.keys(payload.parameters).length);
   let kind, message, error;
-  if (ngQuotaError(data) || status === 429) {
+  if (ngAnlasError(data, raw)) {
+    kind = 'canvas-limit';
+    message = `The selected channel's NovelAI account has no Anlas (HTTP ${status}). Use a canvas of at most 1024 × 1024 pixels in total, such as Portrait 832 × 1216, Square 1024 × 1024 or Landscape 1216 × 832. ${detail}`;
+  } else if (/请求格式错误|size must be auto or WIDTHxHEIGHT/i.test(detail)) {
+    kind = 'unsupported-format';
+    message = /WIDTHxHEIGHT/i.test(detail)
+      ? `The channel requires size as WIDTHxHEIGHT (HTTP ${status}). ${detail}`
+      : `This channel rejected the request format (HTTP ${status}: "request format error, see the group guide"). Its format is not publicly documented; choose another channel or send the provider's guide. ${detail}`;
+  } else if (ngQuotaError(data) || status === 429) {
     error = ngProviderFailure(data, status);
     kind = ngQuotaError(data) ? 'quota' : /upstream channel unavailable/.test(error.message) ? 'upstream-unavailable' : 'rate-limit';
   } else if (!html && ([401, 403].includes(status) || /invalid[\s_-]*(?:(?:api)[\s_-]*)?(?:key|token)|invalid_api_key|authentication_error/i.test(`${detail} ${code}`))) {
@@ -633,7 +672,14 @@ async function ngStartConstantGeneration(attempt) {
 }
 
 function ngQuotaError(data) {
-  return data?.quota_error === true || /insufficient_quota|billing_hard_limit|quota_exceeded/i.test(String(data?.error?.type || data?.error?.code || ''));
+  const message = typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || '';
+  return data?.quota_error === true || /insufficient_quota|billing_hard_limit|quota_exceeded/i.test(String(data?.error?.type || data?.error?.code || ''))
+    || /not enough quota|pre-?consume|insufficient (?:balance|quota|credit)|余额不足|额度不足/i.test(String(message));
+}
+
+function ngAnlasError(data, raw = '') {
+  const message = typeof data?.error === 'string' ? data.error : data?.error?.message || data?.message || raw || '';
+  return /not enough anlas/i.test(String(message));
 }
 
 async function ngProviderFetch(url, options = {}) {
@@ -2074,6 +2120,7 @@ function routeCandidates() {
   // RVL does not route its normal NAI V5/V4.5 models through the images API,
   // even when a generic route override was previously saved in the extension.
   if (ngUsesShopNativeChat(s.model)) return ['chat'];
+  if (ngIsShopDz(s.model)) return ['chat'];
   if (ngUsesCompactChatImageRoute(s.model)) return ['chat'];
   if (ngUsesBackupImagesRoute(s.model)) return ['images'];
   if (mode === 'images') return ['images'];
@@ -2111,6 +2158,24 @@ function chatPayloadFrom(payload, state) {
   };
   if (ngUsesShopNativeChat(model)) {
     return { model, messages: [{ role: 'user', content: state.prompt.trim() }], input: state.prompt.trim(), action: naiAction(state), parameters: ngBuildNativeParameters(state), use_new_shared_trial: ngIsNai5Model(model) ? true : undefined };
+  }
+  if (ngIsShopDz(model)) {
+    const dz = ngDzCanvas(canvas.width, canvas.height);
+    return cleanObject({
+      model,
+      messages: [{ role: 'user', content: state.prompt.trim() }],
+      size: dz.size,
+      width: dz.width,
+      height: dz.height,
+      aspect_ratio: ngAspectRatioLabel(dz.width, dz.height),
+      image_generation: {
+        ...payload,
+        size: dz.size,
+        width: dz.width,
+        height: dz.height,
+        parameters: payload.parameters ? { ...payload.parameters, width: dz.width, height: dz.height } : undefined,
+      },
+    });
   }
   if (ngUsesCompactChatImageRoute(model)) {
     const negative = state.negative?.trim();
@@ -2858,6 +2923,10 @@ function requestCandidates(state) {
   const s = settings();
   const strict = strictPayload(state);
   if (ngUsesShopNativeChat(s.model)) return [{ name: 'rvl-shop-nai-native-chat', payload: strict }];
+  if (ngIsShopDz(s.model) && !hasAdvancedReferences(state) && !state.source) {
+    // One paid attempt: a schema fallback cannot fix a DZ size/quota error.
+    return [{ name: 'rvl-shop-dz-chat', payload: ngBuildOpenAiWithNativeParameters(state) }];
+  }
   if (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source) {
     return [{ name: 'rvl-compact-chat', payload: strict }];
   }
@@ -3184,6 +3253,13 @@ async function generateState(state, label = 'Generating…') {
   if (state.editMode === 'inpaint' && state.source && !state.mask) updateMaskFromCanvas();
   if (state.editMode === 'inpaint' && state.source && !state.mask) throw new Error('Paint an inpaint mask before generating.');
   if (state.editMode === 'inpaint' && !state.source) throw new Error('Choose a source image before inpainting.');
+  if (ngIsShopDz(s.model)) {
+    const canvas = ngResolveCanvasSize(state);
+    const dz = ngDzCanvas(canvas.width, canvas.height);
+    if (dz.overFreeLimit) {
+      throw Object.assign(new Error(`[DZ] channels only generate canvases up to 1024 × 1024 pixels in total; ${dz.width} × ${dz.height} needs Anlas the channel does not have. Choose Portrait 832 × 1216, Square 1024 × 1024 or Landscape 1216 × 832. No request was sent.`), { status: 0, kind: 'canvas-limit', preflight: true });
+    }
+  }
 
   const controller = new AbortController();
   const sequentialRequestCount = (ngUsesCompactChatImageRoute(s.model) && !hasAdvancedReferences(state) && !state.source)
