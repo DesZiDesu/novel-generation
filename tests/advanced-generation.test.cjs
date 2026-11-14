@@ -819,3 +819,62 @@ test('RVL shop legacy V4.5 uses compact chat and Bak uses the image route', asyn
     if (route.startsWith('chat')) assert.doesNotMatch(requests[0].body.messages[0].content, /Parameter\{/);
   }
 });
+
+test('RVL [DM]-[OpenAI] channels use the OpenAI wrapper, not the native DM envelope', async () => {
+  const requests = [];
+  const api = runtime(async (url, options) => {
+    if ((options?.method || 'GET') === 'POST' && /\/(?:images\/generations|chat\/completions)$/.test(url)) requests.push({ url, body: JSON.parse(options.body) });
+    return Response.json({ data: [{ b64_json: 'aGVsbG8=' }] });
+  });
+  api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+  api.settings().model = '[DM]-[OpenAI]-nai-diffusion-5-full-[0.2]';
+  await api.generateState(state({ seed: 123456 }));
+  assert.equal(requests.length, 1);
+  assert.match(requests[0].url, /\/images\/generations$/);
+  assert.equal(requests[0].body.size, '832x1216');
+  assert.equal(requests[0].body.prompt, 'a cat');
+});
+
+test('RVL [DZ] channels send one chat request with WIDTHxHEIGHT size for every normal preset', async () => {
+  for (const [preset, width, height] of [['portrait', 832, 1216], ['square', 1024, 1024], ['landscape', 1216, 832], ['custom', 800, 1200]]) {
+    const requests = [];
+    const api = runtime(async (url, options) => {
+      if ((options?.method || 'GET') === 'POST' && /\/(?:images\/generations|chat\/completions)$/.test(url)) requests.push({ url, body: JSON.parse(options.body) });
+      return Response.json({ choices: [{ message: { content: 'https://example.test/image.png' } }] });
+    });
+    api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+    api.settings().model = '[DZ]-nai-diffusion-5-full-[0.62]';
+    await api.generateState(state({ preset, width, height }));
+    assert.equal(requests.length, 1);
+    assert.match(requests[0].url, /\/chat\/completions$/);
+    const expected = preset === 'custom' ? '832x1216' : `${width}x${height}`;
+    const body = requests[0].body;
+    assert.equal(body.size, expected);
+    assert.doesNotMatch(JSON.stringify(body), /"size":"\d+:\d+"/);
+    assert.equal(body.image_generation.size, expected);
+    assert.equal(`${body.image_generation.parameters.width}x${body.image_generation.parameters.height}`, expected);
+  }
+});
+
+test('RVL [DZ] canvases above the free pixel budget are refused before any paid request', async () => {
+  let calls = 0;
+  const api = runtime(async () => { calls += 1; return Response.json({}); });
+  api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+  api.settings().model = '[DZ]-nai-diffusion-5-full-[0.62]';
+  await assert.rejects(api.generateState(state({ preset: 'custom', width: 1024, height: 1536 })), /up to 1024 × 1024 pixels.*No request was sent/);
+  assert.equal(calls, 0);
+});
+
+test('Anlas, wallet and undocumented-format errors are explained', async () => {
+  const cases = [
+    [402, { error: { message: 'Not enough Anlas. Required: 45, Available: 0', type: 'bad_response_status_code' } }, /no Anlas.*1024 × 1024/],
+    [403, { error: { message: 'Not enough quota to pre-consume for this request: ฿0.1339' } }, /wallet or quota exhausted/],
+    [400, { error: { message: '请求格式错误，请参考群内使用指南', type: 'invalid_request_error' } }, /request format error, see the group guide/],
+  ];
+  for (const [status, payload, pattern] of cases) {
+    const api = runtime(async () => Response.json(payload, { status }));
+    api.settings().proxyBaseUrl = 'https://shop.rvlconnect.com/v1';
+    api.settings().model = '[DZ]-nai-diffusion-5-full-[0.62]';
+    await assert.rejects(api.generateState(state()), pattern);
+  }
+});

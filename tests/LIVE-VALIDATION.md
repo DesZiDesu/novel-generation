@@ -126,3 +126,21 @@ Validation:
 - Chromium and WebKit pass against actual SillyTavern 1.19.0 with generic CORS proxy disabled. Each engine exercises 20 local fixture generation requests, including new HTML 502, HTTP 200 HTML, and `Invalid token` cases, with peak concurrency one and no browser errors.
 - The WebKit cache regression upgrades cached 0.8.0 assets to 0.8.6 without clearing cache, cookies, local storage or saved settings.
 - A final live check on 0.8.6 retains the X 502 and DM 500 with the new readable diagnostics and original request IDs. Across this investigation, 10 live generation requests produced one image. Discovery/capability checks are separate; local fixture images are not counted as live output. The provider failures themselves remain unresolved.
+
+## 2026-11-14 — NAI 5 Full channel sweep and `[DZ]` fix, 0.9.0
+
+Tested against `https://shop.rvlconnect.com/v1` with the user's shop key (1,284 models, 36 NAI). RVL has renamed its channels (`[AG]` removed, `[OAI]` → `[OpenAI]`, new `[DZ]` and `[MD]`). There are ten NAI 5 **Full** models, and each was attempted with the extension's own payload builder (portrait 832 × 1216, 28 steps, one image). No Curated model was called.
+
+| Model | Result |
+| --- | --- |
+| `[DZ]-nai-diffusion-5-full-[0.62]` | **Works.** 832 × 1216 PNG via images and chat, directly and through SillyTavern's Custom bridge. Seed is ignored (random PNG seed). |
+| `[DM]-[OpenAI]-nai-diffusion-5-full-[0.2]` | **Generates**, but 0.8.6 misrouted it as native DM and returned 1216 × 832. Fixed in 0.9.0 (tag detection); the fixed route was not re-run live (see wallet note). |
+| `[X]-nai-diffusion-5-full-[0.21]` | HTTP 429 `没有可用token` (no upstream token available). |
+| `[DM]-nai-diffusion-5-full-[0.46]` | HTTP 500 `parameters is required` (unchanged from 0.8.6). |
+| `[MD]-nai-diffusion-5-full:{k_euler, k_euler_ancestral, k_dpmpp_2m, k_dpmpp_2m_sde, k_dpmpp_sde, k_dpmpp_2s_ancestral}-[0.58]` | HTTP 400 `请求格式错误，请参考群内使用指南` for every tried shape: minimal chat, size, compact, Parameter{}, native envelope, JSON content, content array, stream and system message. The images route returns 404 `not found.` The format is documented only in the provider's group guide. |
+
+`[DZ]` size matrix (chat, `size` field): 832×1216, 1216×832, 1024×1024 and 640×640 return exactly that size; 800×1200 is snapped to 832×1216 and 1000×1000 to 1024×1024. 1024×1536, 1536×1024 and 1088×1920 return HTTP 402 *Not enough Anlas*. `832:1216` returns HTTP 400 *size must be auto or WIDTHxHEIGHT*. An early `[DZ]` chat 502 (`upstream request failed`) did not reproduce on retries of the identical payload, so it was transient.
+
+The sweep stopped when the wallet returned HTTP 403 *Not enough quota to pre-consume: ฿0.1339* (about ฿0.13 per image). Roughly 40 paid requests were sent across diagnostics.
+
+Validation: 57 Node tests pass (new: `[OpenAI]` routing, `[DZ]` WIDTHxHEIGHT for every preset, the >1 MP preflight with zero requests, and Anlas/wallet/`[MD]` messages). The Chromium Studio UI, hosted-bridge and HTTP-cache upgrade suites pass against SillyTavern 1.19.0 with `enableCorsProxy: false`. WebKit was not run because no WebKit browser is installed in this environment. The UI and hosted suites share one test profile, so reset `image.n` to 1 before running the UI suite after the hosted suite.

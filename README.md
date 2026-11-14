@@ -24,11 +24,20 @@ In SillyTavern open **Extensions → Install Extension** and paste:
 
 ### Updating without clearing browser data
 
-The current manifest loads `index.js?v=0.8.6` and `style.css?v=0.8.6`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
+The current manifest loads `index.js?v=0.9.0` and `style.css?v=0.9.0`. Versioned asset URLs let Safari and other browsers request the new runtime and stylesheet while keeping existing cached files, cookies, API settings and prompt drafts. After updating the extension on `main`, reload the SillyTavern page normally to activate the new code. Clearing Safari cache or website data is unnecessary. Future releases must update the asset URL versions together with the manifest and runtime versions.
 
 The cache regression test is `CHROMIUM_PATH=/usr/bin/chromium node tests/cached-update.cjs`, or `BROWSER=webkit node tests/cached-update.cjs`, against an isolated SillyTavern installation. It warms the browser's real HTTP cache with a 0.8.0 fixture, publishes the current manifest, then verifies the current Studio loads while old cached assets and saved state remain available. The fixture serves manifests without caching so the test isolates stale JavaScript/CSS; a host that also serves a stale manifest must update/revalidate that metadata.
 
 ## Current scope
+
+### 0.9.0 — formal monochrome redesign and RVL channel fixes
+
+- **Redesign.** Studio, the Extensions drawer and the wand menu keep the black/gray/white palette and square geometry, with a more formal hierarchy: uppercase micro-labels, monospace numbers, numbered section cards (`01`, `02` …) with an active rule, a framed canvas on a dot grid whose empty frame follows the selected aspect ratio, and a docked action bar. The drawer gains an **Open Novel Gen Studio** button.
+- **Motion.** Staggered entrance for the shell, columns and sections; animated section reveal and chevrons; sliding tab underline; pointer-follow highlight on buttons; a sheen on Generate; while generating, a header progress line, a scan line over the canvas and a busy Generate button; blur-to-sharp reveal of new images; staggered History and wand sub-menu items. Everything is disabled under `prefers-reduced-motion`.
+- **RVL `[DZ]` channels** accept only `size: "WIDTHxHEIGHT"`: a colon size such as `832:1216` is rejected with *size must be auto or WIDTHxHEIGHT*, and bare `width`/`height` are ignored (1024 × 1024 is returned). Their upstream NovelAI account has no Anlas, so canvases above 1024 × 1024 total pixels (for example 1024 × 1536) fail with HTTP 402 *Not enough Anlas*. `[DZ]` now sends one chat request with a 64-aligned `WIDTHxHEIGHT` size, and oversized canvases are refused before any paid request.
+- **RVL `[DM]-[OpenAI]`**: RVL renamed the `[OAI]` tag to `[OpenAI]`, which routed that channel through the native DM envelope and returned 1216 × 832 for a portrait request. Both spellings now use the OpenAI wrapper.
+- **Errors**: Anlas, wallet pre-consume (`Not enough quota to pre-consume`) and the undocumented `[MD]` format error (`请求格式错误，请参考群内使用指南`) are explained, instead of being reported as authentication failures.
+
 
 ### Provider diagnostics in 0.8.6
 
