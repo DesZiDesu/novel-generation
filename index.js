@@ -2,7 +2,7 @@
 
 /* ===== Runtime 01: configuration, settings, and shared utilities ===== */
 const EXT = 'novelGeneration';
-const VERSION = '0.8.6';
+const VERSION = '0.9.0';
 
 const SIZES = {
   portrait: [832, 1216, 'Vertical / Portrait'],
@@ -6996,5 +6996,113 @@ ngV055InjectAiHelper = function () {
   const readyHandler = () => mountInlineHelper();
   document.addEventListener('novel-generation:studio-ready', readyHandler);
   globalThis.__novelGenerationImageAnalyzerReadyHandler = readyHandler;
+})();
+
+/* ===== Runtime 0.9: formal monochrome design layer (motion + layout hooks) ===== */
+(function ngV090DesignLayer() {
+  if (typeof document === 'undefined' || typeof MutationObserver !== 'function') return;
+  const observers = new WeakMap();
+
+  function watch(node, callback, options) {
+    if (!node) return;
+    const observer = new MutationObserver(callback);
+    observer.observe(node, options);
+    const list = observers.get(node) || [];
+    list.push(observer);
+    observers.set(node, list);
+  }
+
+  function enhanceStudio(overlay) {
+    if (!overlay || overlay.dataset.ngV090 === 'true') return;
+    overlay.dataset.ngV090 = 'true';
+    overlay.classList.add('ng-v090');
+
+    // Stagger index for the section cards' entrance animation.
+    overlay.querySelectorAll('#ng-generate-panel > details.ng-studio-section').forEach((section, index) => {
+      section.style.setProperty('--ng-i', String(Math.min(index, 12)));
+    });
+
+    // Busy state drives the header progress line, the canvas scan line and
+    // the status ellipsis. The Generate button already owns aria-busy.
+    const generate = overlay.querySelector('#ng-generate');
+    const syncBusy = () => overlay.toggleAttribute('data-ng-busy', generate?.getAttribute('aria-busy') === 'true');
+    watch(generate, syncBusy, { attributes: true, attributeFilter: ['aria-busy'] });
+    syncBusy();
+
+    // The empty canvas frame follows the selected canvas ratio.
+    const size = overlay.querySelector('#ng-stage-size');
+    let lastSize = '';
+    const syncSize = () => {
+      const match = String(size?.textContent || '').match(/(\d+)\s*[×x]\s*(\d+)/);
+      if (!match) return;
+      overlay.style.setProperty('--ng-canvas-ratio', `${match[1]} / ${match[2]}`);
+      const key = `${match[1]}x${match[2]}`;
+      if (lastSize && key !== lastSize && size) {
+        size.classList.remove('is-changed');
+        void size.offsetWidth;
+        size.classList.add('is-changed');
+      }
+      lastSize = key;
+    };
+    watch(size, syncSize, { childList: true, characterData: true, subtree: true });
+    syncSize();
+
+    // New preview images fade in from a soft blur once decoded.
+    const preview = overlay.querySelector('#ng-preview');
+    const reveal = () => preview?.querySelectorAll('img:not([data-ng-revealed])').forEach(image => {
+      image.dataset.ngRevealed = 'true';
+      const show = () => requestAnimationFrame(() => image.classList.add('is-revealed'));
+      if (image.complete) show();
+      else {
+        image.addEventListener('load', show, { once: true });
+        image.addEventListener('error', show, { once: true });
+      }
+    });
+    watch(preview, reveal, { childList: true, subtree: true });
+    reveal();
+
+    // Pointer-follow highlight on buttons (CSS reads --ng-px / --ng-py).
+    overlay.addEventListener('pointermove', event => {
+      const button = event.target instanceof Element ? event.target.closest('.menu_button') : null;
+      if (!button) return;
+      const rect = button.getBoundingClientRect();
+      button.style.setProperty('--ng-px', `${Math.round(event.clientX - rect.left)}px`);
+      button.style.setProperty('--ng-py', `${Math.round(event.clientY - rect.top)}px`);
+    }, { passive: true });
+  }
+
+  function enhanceDrawer() {
+    const root = document.getElementById('ng-settings');
+    if (!root || root.dataset.ngV090 === 'true') return;
+    root.dataset.ngV090 = 'true';
+    root.classList.add('ng-v090');
+    root.querySelectorAll('details.ng-section').forEach((section, index) => section.style.setProperty('--ng-i', String(Math.min(index, 10))));
+    const copy = root.querySelector('.ng-settings-copy');
+    if (copy && !root.querySelector('.ng-v090-drawer-launch')) {
+      const launch = document.createElement('button');
+      launch.type = 'button';
+      launch.className = 'ng-v090-drawer-launch';
+      launch.innerHTML = '<i class="fa-solid fa-wand-magic-sparkles"></i><span>Open Novel Gen Studio</span><small>Full-screen workspace</small>';
+      launch.addEventListener('click', () => openStudio('free', 'prompt'));
+      copy.insertAdjacentElement('afterend', launch);
+    }
+  }
+
+  function scan() {
+    const overlay = document.getElementById('ng-studio-overlay');
+    if (overlay) enhanceStudio(overlay);
+    enhanceDrawer();
+  }
+
+  // The Studio overlay is appended to <html>; the drawer is mounted later
+  // inside the Extensions panel. Both are re-created, so keep observing.
+  watch(document.documentElement, scan, { childList: true });
+  const startBodyWatch = () => {
+    const container = document.getElementById('extensions_settings2') || document.getElementById('extensions_settings') || document.body;
+    watch(container, scan, { childList: true, subtree: container === document.body ? false : true });
+    scan();
+  };
+  if (document.readyState === 'loading') document.addEventListener('DOMContentLoaded', startBodyWatch, { once: true });
+  else startBodyWatch();
 })();
 })();
